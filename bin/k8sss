@@ -4,8 +4,6 @@ set -eo pipefail; shopt -s inherit_errexit
 PKGROOT=$(realpath "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/..")
 source "$PKGROOT/.upkg/records.sh/records.sh"
 
-CONFIG_DIR=$HOME/.config/k8sss
-
 main() {
   DOC="k8sss - Issue kubernetes client certificates via smallstep
 Usage:
@@ -51,21 +49,26 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
   [[ $__keyuri != "sshagentkms:\$USER@\$HOST" ]] || __keyuri=sshagentkms:$(id -un)@$(hostname)
   [[ $__context != \$KUBEAPI_HOSTNAME ]] || __context=$KUBEAPI_HOSTNAME
   [[ $__cluster != \$KUBEAPI_HOSTNAME ]] || __cluster=$KUBEAPI_HOSTNAME
-  KUBE_API_SERVER_CA_CRT=$CONFIG_DIR/${KUBEAPI_HOSTNAME}-server-ca.crt
-  KUBE_API_CLIENT_CA_CRT=$CONFIG_DIR/${KUBEAPI_HOSTNAME}-client-ca.crt
+  local config_dir=$HOME/.config/k8sss/${KUBEAPI_HOSTNAME}
+  # shellcheck disable=SC2154
+  local \
+    kubeapi_server_ca_crt=$config_dir/server-ca.crt \
+    kubeapi_client_ca_crt=$config_dir/client-ca.crt \
+    user_crt=$config_dir/${__username}.crt \
+    user_key=$config_dir/${__username}.key
 
   # shellcheck disable=SC2153,SC2154
   if $setup; then
     local yesno remote_kube_api_server_ca_fp kube_api_server_ca_fp
     trap 'error "Failed to configure, run with LOGLEVEL=verbose to see more detailed errors"' ERR
-    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$config_dir"
     remote_kube_api_server_ca=$(curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9000/roots.pem")
     # TOFU for Kubernetes API Server CA
     remote_kube_api_server_ca_fp=$(step certificate fingerprint /dev/stdin <<<"$remote_kube_api_server_ca")
-    if [[ -e "$KUBE_API_SERVER_CA_CRT" ]]; then
+    if [[ -e "$kubeapi_server_ca_crt" ]]; then
       info "Checking existing Kubernetes API server CA certificate"
       local kube_api_server_ca_fp
-      kube_api_server_ca_fp=$(step certificate fingerprint "$KUBE_API_SERVER_CA_CRT")
+      kube_api_server_ca_fp=$(step certificate fingerprint "$kubeapi_server_ca_crt")
       if [[ $remote_kube_api_server_ca_fp != "$kube_api_server_ca_fp" ]]; then
         printf "Saved fingerprint:  %s\n" "$remote_kube_api_server_ca_fp" >&2
         printf "Remote fingerprint: %s\n" "$kube_api_server_ca_fp" >&2
@@ -78,16 +81,16 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
       [[ $(read -rp 'Do you want to establish that trust now? [y/N]' yesno; echo "$yesno") =~ ^[Yy](es)?$ ]] || \
         { trap '' ERR; fatal "User aborted operation"; }
     fi
-    printf "%s\n" "$remote_kube_api_server_ca" >"$KUBE_API_SERVER_CA_CRT"
+    printf "%s\n" "$remote_kube_api_server_ca" >"$kubeapi_server_ca_crt"
 
     info "Downloading Kubernetes API Client CA certificate"
-    curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9001/roots.pem" >"$KUBE_API_CLIENT_CA_CRT" 2> >(LOGPROGRAM=curl pipe_verbose)
+    curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9001/roots.pem" >"$kubeapi_client_ca_crt" 2> >(LOGPROGRAM=curl pipe_verbose)
 
     info "Setting up %s" "${KUBECONFIG//"$HOME"/"~"}"
     kubectl config --kubeconfig "$KUBECONFIG" set-cluster "$__cluster" \
       --server="https://$KUBEAPI_HOSTNAME:6443" \
       --embed-certs \
-      --certificate-authority="$KUBE_API_SERVER_CA_CRT"
+      --certificate-authority="$kubeapi_server_ca_crt"
     kubectl config --kubeconfig "$KUBECONFIG" set-credentials "$__username@$__cluster" \
       --exec-api-version="client.authentication.k8s.io/v1beta1" \
       --exec-command="$(realpath "${BASH_SOURCE[0]}")" \
@@ -97,12 +100,12 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
       --exec-arg="$KUBEAPI_HOSTNAME"
     kubectl config --kubeconfig "$HOME/.kube/config.yaml" set-context "$__context" \
       --cluster "$__cluster" --user "$__username@$__cluster"
-    rm -f "$CONFIG_DIR/$__username.crt" "$CONFIG_DIR/$__username.key"
+    rm -f "$user_crt" "$user_key"
   elif $get_kube_cert; then
     trap 'error "Failed to get certificate, run with LOGLEVEL=verbose to see more detailed errors"' ERR
     local ca_url=https://${KUBEAPI_HOSTNAME}:9001
-    if [[ ! -e $CONFIG_DIR/$__username.crt ]] || \
-        step certificate needs-renewal --expires-in 0s "$CONFIG_DIR/$__username.crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
+    if [[ ! -e $user_crt ]] || \
+        step certificate needs-renewal --expires-in 0s "$user_crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
       debug "Renewing client certificate"
       local pubkey_pem admin_jwk kid header payload signature step_logs
       pubkey_pem=$(step kms key "$__keyuri" 2> >(LOGPROGRAM=step pipe_verbose))
@@ -129,10 +132,10 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
         }' | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
         signature=$(step kms sign --format jws --in <(printf "%s.%s" "$header" "$payload") \
           --kms "${__keyuri%%:*}" "$__keyuri")
-        if step_logs=$(step ca certificate --ca-url="$ca_url" --root="$KUBE_API_CLIENT_CA_CRT" \
+        if step_logs=$(step ca certificate --ca-url="$ca_url" --root="$kubeapi_client_ca_crt" \
           --token="$header.$payload.$signature" --force \
-          "$__username" "$CONFIG_DIR/$__username.crt" "$CONFIG_DIR/$__username.key" 2>&1); then
-          return 0
+          "$__username" "$user_crt" "$user_key" 2>&1); then
+          break
         elif (( --tries_remaining > 0 )); then
           error "Failed to issue kube-api certificate (%d tries remaining):\n%s" "$tries_remaining" "$step_logs"
           sleep 5
@@ -142,17 +145,17 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
       done
     fi
     local cert key
-    cert=$(cat "$CONFIG_DIR/$__username.crt")
-    key=$(cat "$CONFIG_DIR/$__username.key")
+    cert=$(cat "$user_crt")
+    key=$(cat "$user_key")
     printf '{
-    "apiVersion": "client.authentication.k8s.io/v1beta1",
-    "kind": "ExecCredential",
-    "status": {
-      "clientCertificateData": "%s",
-      "clientKeyData": "%s"
-    }
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "kind": "ExecCredential",
+  "status": {
+    "clientCertificateData": "%s",
+    "clientKeyData": "%s"
   }
-  ' "${cert//$'\n'/'\n'}" "${key//$'\n'/'\n'}"
+}
+' "${cert//$'\n'/'\n'}" "${key//$'\n'/'\n'}"
   fi
 }
 
