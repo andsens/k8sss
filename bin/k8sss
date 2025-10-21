@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# shellcheck source-path=..
+set -eo pipefail; shopt -s inherit_errexit
+PKGROOT=$(realpath "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/..")
+source "$PKGROOT/.upkg/records.sh/records.sh"
+
+CONFIG_DIR=$HOME/.config/k8sss
+KUBE_API_SERVER_CA_CRT=$CONFIG_DIR/kube-api-server-ca.crt
+KUBE_API_CLIENT_CA_CRT=$CONFIG_DIR/kube-api-client-ca.crt
+KUBECONFIG_PATH=$HOME/.kube/k8sss.yaml
+
+main() {
+  DOC="k8sss - Issue kubernetes client certificates via smallstep
+Usage:
+  k8sss setup [-k KN -u UN] KUBEAPI_HOSTNAME
+  k8sss cert [-k KN -u UN] KUBEAPI_HOSTNAME
+
+Options:
+  -u --username=UN  K8S username to authenticate as [default: system:admin]
+  -k --keyuri=URI   Smallstep key URI used for authentication
+                    [default: sshagentkms:\$USER@\$HOST]
+"
+# docopt parser below, refresh this parser with `docopt.sh k8sss`
+# shellcheck disable=2016,2086,2329,1090,1091,2034
+docopt() { local v='2.0.3'; source \
+"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:357};usage=${DOC:59:95}
+digest=5be71;options=('-k --keyuri 1' '-u --username 1');node_0(){ value \
+__keyuri 0;};node_1(){ value __username 1;};node_2(){ value KUBEAPI_HOSTNAME a;}
+node_3(){ switch setup a:setup;};node_4(){ switch cert a:cert;};node_5(){
+sequence 3 6 2;};node_6(){ optional 0 1;};node_7(){ sequence 4 6 2;};node_8(){
+choice 5 7;};cat <<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2
+printf "%s\n" "${DOC:59:95}" >&2;exit 1;}';local varnames=(__keyuri __username \
+KUBEAPI_HOSTNAME setup cert) varname;for varname in "${varnames[@]}"; do unset \
+"var_$varname";done;parse 8 "$@";local p=${DOCOPT_PREFIX:-''};for varname in \
+"${varnames[@]}"; do unset "$p$varname";done;eval $p'__keyuri=${var___keyuri:-'\
+"'"'sshagentkms:$USER@$HOST'"'"'};'$p'__username=${var___username:-system:admi'\
+'n};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HOSTNAME:-};'$p'setup=${var_setup:-fals'\
+'e};'$p'cert=${var_cert:-false};';local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] \
+&& docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for varname in \
+"${varnames[@]}"; do declare -p "$p$varname";done;done;}
+# docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' k8sss`
+  eval "$(docopt "$@")"
+
+  export KUBECONFIG
+  [ -n "$KUBECONFIG" ] || export KUBECONFIG="$HOME/.kube/config.yaml"
+  grep -q "$KUBECONFIG_PATH" <<<"$KUBECONFIG" || KUBECONFIG=$KUBECONFIG:$KUBECONFIG_PATH
+
+  [[ ! $KUBEAPI_HOSTNAME =~ ^(https?://)?([^:]+) ]] || KUBEAPI_HOSTNAME=${BASH_REMATCH[2]}
+  [[ $__keyuri != "\$USER@\$HOST" ]] || __keyuri=$(id -un)@$(hostname)
+
+  # shellcheck disable=SC2153,SC2154
+  if $setup; then
+    setup "$KUBEAPI_HOSTNAME" "$__keyuri" "$__username"
+  elif $get_kube_cert; then
+    get_kube_client_cert "$KUBEAPI_HOSTNAME" "$__keyuri" "$__username"
+  fi
+}
+
+setup() {
+  local kube_api_hostname=$1 keyuri=$2 username=$3
+  local yesno remote_kube_api_server_ca_fp kube_api_server_ca_fp
+  trap 'error "Failed to configure, run with LOGLEVEL=verbose to see more detailed errors"' ERR
+  mkdir -p "$CONFIG_DIR"
+  remote_kube_api_server_ca=$(curl -k --no-progress-meter "https://$kube_api_hostname:9000/roots.pem")
+  # TOFU for Kubernetes API Server CA
+  remote_kube_api_server_ca_fp=$(step certificate fingerprint /dev/stdin <<<"$remote_kube_api_server_ca")
+  if [[ -e "$KUBE_API_SERVER_CA_CRT" ]]; then
+    info "Checking existing Kubernetes API server CA certificate"
+    local kube_api_server_ca_fp
+    kube_api_server_ca_fp=$(step certificate fingerprint "$KUBE_API_SERVER_CA_CRT")
+    if [[ $remote_kube_api_server_ca_fp != "$kube_api_server_ca_fp" ]]; then
+      printf "Saved fingerprint:  %s\n" "$remote_kube_api_server_ca_fp" >&2
+      printf "Remote fingerprint: %s\n" "$kube_api_server_ca_fp" >&2
+      error "The saved Kubernetes API server CA certificate fingerprint does not match the one from the server!"
+      [[ $(read -rp 'Are you sure you want to continue? [y/N]' yesno; echo "$yesno") =~ ^[Yy](es)?$ ]] || \
+        { trap '' ERR; fatal "User aborted operation"; }
+    fi
+  else
+    warning "No trust has been established with this Kubernetes cluster yet.\nThe root certificate fingerprint is %s" "$remote_kube_api_server_ca_fp"
+    [[ $(read -rp 'Do you want to establish that trust now? [y/N]' yesno; echo "$yesno") =~ ^[Yy](es)?$ ]] || \
+      { trap '' ERR; fatal "User aborted operation"; }
+  fi
+  printf "%s\n" "$remote_kube_api_server_ca" >"$KUBE_API_SERVER_CA_CRT"
+
+  info "Downloading Kubernetes API Client CA certificate"
+  curl -k --no-progress-meter "https://$kube_api_hostname:9001/roots.pem" >"$KUBE_API_CLIENT_CA_CRT" 2> >(LOGPROGRAM=curl pipe_verbose)
+
+  create_kube_config "$kube_api_hostname" "$keyuri" "$username"
+}
+
+create_kube_config() {
+  local kube_api_hostname=$1 keyuri=$2 username=$3 kube_context=phxc kube_cluster=phxc
+  info "Setting up %s" "${KUBECONFIG_PATH//"$HOME"/"~"}"
+  kubectl config --kubeconfig "$KUBECONFIG_PATH" set-cluster "$kube_cluster" \
+    --server="https://$kube_api_hostname:6443" \
+    --embed-certs \
+    --certificate-authority="$KUBE_API_SERVER_CA_CRT"
+  kubectl config --kubeconfig "$KUBECONFIG_PATH" set-credentials "$username@$kube_cluster" \
+    --exec-api-version="client.authentication.k8s.io/v1beta1" \
+    --exec-command="$(realpath "${BASH_SOURCE[0]}")" \
+    --exec-arg="get-kube-cert" \
+    --exec-arg="-k$keyuri" \
+    --exec-arg="-u$username" \
+    --exec-arg="$kube_api_hostname"
+  kubectl config --kubeconfig "$HOME/.kube/config.yaml" set-context $kube_context \
+    --cluster "$kube_cluster" --user "$username@$kube_cluster"
+  rm -f "$CONFIG_DIR/$username.crt" "$CONFIG_DIR/$username.key"
+}
+
+get_kube_client_cert() {
+  local kube_api_hostname=$1 keyuri=$2 username=$3 cert key
+  renew_kube_client_cert "$kube_api_hostname" "$keyuri" "$username"
+  cert=$(cat "$CONFIG_DIR/$username.crt")
+  key=$(cat "$CONFIG_DIR/$username.key")
+  printf '{
+  "apiVersion": "client.authentication.k8s.io/v1beta1",
+  "kind": "ExecCredential",
+  "status": {
+    "clientCertificateData": "%s",
+    "clientKeyData": "%s"
+  }
+}
+' "${cert//$'\n'/'\n'}" "${key//$'\n'/'\n'}"
+}
+
+renew_kube_client_cert() {
+  local kube_api_hostname=$1 keyuri=$2 username=$3 ca_url
+  trap 'error "Failed to get certificate, run with LOGLEVEL=verbose to see more detailed errors"' ERR
+  ca_url=https://${kube_api_hostname}:9001
+  if [[ ! -e $CONFIG_DIR/$username.crt ]] || \
+      step certificate needs-renewal --expires-in 0s "$CONFIG_DIR/$username.crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
+    debug "Renewing client certificate"
+    local pubkey_pem admin_jwk kid header payload signature step_logs
+    pubkey_pem=$(step kms key "$keyuri" 2> >(LOGPROGRAM=step pipe_verbose))
+    admin_jwk=$(step crypto jwk create --force --use sig --from-pem=<(printf "%s\n" "$pubkey_pem") \
+      /dev/stdout /dev/null 2> >(LOGPROGRAM=step pipe_verbose))
+    kid=$(jq -r .kid <<<"$admin_jwk")
+    header=$(jq '{
+      "alg": .alg,
+      "kid": .kid,
+      "typ": "JWT"
+    }' <<<"$admin_jwk" | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
+    local tries_remaining=3
+    while true; do
+      payload=$(jq -n --arg ca_url "$ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
+                      --arg jti "$(openssl rand -hex 32)" --arg sub "$username" '{
+        "aud": ($ca_url + "/1.0/sign"),
+        "exp": ($now + 30),
+        "iat": $now,
+        "iss": $kid,
+        "jti": $jti,
+        "nbf": ($now - 30),
+        "sans": [$sub],
+        "sub": $sub
+      }' | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
+      signature=$(step kms sign --format jws --in <(printf "%s.%s" "$header" "$payload") \
+        --kms "${keyuri%%:*}" "$keyuri")
+      if step_logs=$(step ca certificate --ca-url="$ca_url" --root="$KUBE_API_CLIENT_CA_CRT" \
+        --token="$header.$payload.$signature" --force \
+        "$username" "$CONFIG_DIR/$username.crt" "$CONFIG_DIR/$username.key" 2>&1); then
+        return 0
+      elif (( --tries_remaining > 0 )); then
+        error "Failed to issue kube-api certificate (%d tries remaining):\n%s" "$tries_remaining" "$step_logs"
+        sleep 5
+      else
+        fatal "Failed to issue kube-api certificate (aborting):\n%s" "$step_logs"
+      fi
+    done
+  fi
+}
+
+main "$@"

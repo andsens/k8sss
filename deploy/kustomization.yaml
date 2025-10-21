@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: smallstep
+images:
+- name: ghcr.io/andsens/phxc-utils
+  newTag: sha-3d836db
+resources:
+- cluster-settings.yaml
+- kube-client-ca.yaml
+configMapGenerator:
+- files: [setup-kube-client-ca-config.sh]
+  name: scripts
+- files: [admin.tpl]
+  name: kube-client-ca-templates
+- files: [kube-client-ca.json]
+  name: ca-configs
+replacements:
+- source: {fieldPath: data.domain, kind: ConfigMap, name: cluster-settings}
+  targets:
+  - select: {kind: Service, name: kube-client-ca-external}
+    fieldPaths: [metadata.annotations.coredns\.io/hostname]
+    options: {delimiter: '.', index: 1}
+  - select: {group: apps, kind: Deployment, name: kube-client-ca}
+    fieldPaths: ["spec.template.spec.initContainers.[name=setup-kube-client-ca-config].env.[name=CLUSTER_DOMAIN].value"]
