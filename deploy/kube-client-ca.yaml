@@ -55,7 +55,25 @@ spec:
     app.kubernetes.io/component: kube-client-ca
   ports:
   - name: api
-    port: 9001
+    port: 9000
+    targetPort: api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-client-ca-host
+  labels:
+    app.kubernetes.io/name: smallstep
+    app.kubernetes.io/component: kube-client-ca
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: smallstep
+    app.kubernetes.io/component: kube-client-ca
+  ports:
+  - name: api
+    port: 9000
+    nodePort: 9000
     targetPort: api
 ---
 apiVersion: apps/v1

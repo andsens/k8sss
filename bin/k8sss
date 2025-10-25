@@ -84,7 +84,7 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
     printf "%s\n" "$remote_kube_api_server_ca" >"$kubeapi_server_ca_crt"
 
     info "Downloading Kubernetes API Client CA certificate"
-    curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9001/roots.pem" >"$kubeapi_client_ca_crt" 2> >(LOGPROGRAM=curl pipe_verbose)
+    curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9000/roots.pem" >"$kubeapi_client_ca_crt" 2> >(LOGPROGRAM=curl pipe_verbose)
 
     info "Setting up %s" "${KUBECONFIG//"$HOME"/"~"}"
     kubectl config --kubeconfig "$KUBECONFIG" set-cluster "$__cluster" \
@@ -103,7 +103,7 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
     rm -f "$user_crt" "$user_key"
   elif $get_kube_cert; then
     trap 'error "Failed to get certificate, run with LOGLEVEL=verbose to see more detailed errors"' ERR
-    local ca_url=https://${KUBEAPI_HOSTNAME}:9001
+    local ca_url=https://${KUBEAPI_HOSTNAME}:9000
     if [[ ! -e $user_crt ]] || \
         step certificate needs-renewal --expires-in 0s "$user_crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
       debug "Renewing client certificate"
@@ -117,8 +117,8 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
         "kid": .kid,
         "typ": "JWT"
       }' <<<"$admin_jwk" | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
-      local tries_remaining=3
-      while true; do
+      local tries_remaining
+      for tries_remaining in {2..0}; do
         payload=$(jq -n --arg ca_url "$ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
                         --arg jti "$(openssl rand -hex 32)" --arg sub "$__username" '{
           "aud": ($ca_url + "/1.0/sign"),
@@ -136,7 +136,7 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
           --token="$header.$payload.$signature" --force \
           "$__username" "$user_crt" "$user_key" 2>&1); then
           break
-        elif (( --tries_remaining > 0 )); then
+        elif (( tries_remaining > 0 )); then
           error "Failed to issue kube-api certificate (%d tries remaining):\n%s" "$tries_remaining" "$step_logs"
           sleep 5
         else
