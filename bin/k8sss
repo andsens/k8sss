@@ -7,7 +7,7 @@ source "$PKGROOT/.upkg/records.sh/records.sh"
 main() {
   DOC="k8sss - Issue kubernetes client certificates via smallstep
 Usage:
-  k8sss setup [options] KUBEAPI_HOSTNAME
+  k8sss setup [options] KUBEAPI_URL
   k8sss cert [-k KN -u UN] KUBEAPI_HOSTNAME
 
 Options:
@@ -21,31 +21,37 @@ Options:
 # shellcheck disable=2016,2086,2329,1090,1091,2034
 docopt() { local v='2.0.3'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:511};usage=${DOC:59:91}
-digest=dc6b9;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:506};usage=${DOC:59:86}
+digest=fdf62;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
 'name 1');node_0(){ value __context 0;};node_1(){ value __cluster 1;};node_2(){
-value __keyuri 2;};node_3(){ value __username 3;};node_4(){ value \
-KUBEAPI_HOSTNAME a;};node_5(){ switch setup a:setup;};node_6(){ switch cert \
-a:cert;};node_7(){ sequence 5 8 4;};node_8(){ optional 0 1;};node_9(){
-sequence 6 10 4;};node_10(){ optional 2 3;};node_11(){ choice 7 9;};cat <<<' \
-docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
-"${DOC:59:91}" >&2;exit 1;}';local varnames=(__context __cluster __keyuri \
-__username KUBEAPI_HOSTNAME setup cert) varname;for varname in \
-"${varnames[@]}"; do unset "var_$varname";done;parse 11 "$@";local \
+value __keyuri 2;};node_3(){ value __username 3;};node_4(){ value KUBEAPI_URL a
+};node_5(){ value KUBEAPI_HOSTNAME a;};node_6(){ switch setup a:setup;}
+node_7(){ switch cert a:cert;};node_8(){ sequence 6 9 4;};node_9(){ optional 0 1
+};node_10(){ sequence 7 11 5;};node_11(){ optional 2 3;};node_12(){ choice 8 10
+};cat <<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
+"${DOC:59:86}" >&2;exit 1;}';local varnames=(__context __cluster __keyuri \
+__username KUBEAPI_URL KUBEAPI_HOSTNAME setup cert) varname;for varname in \
+"${varnames[@]}"; do unset "var_$varname";done;parse 12 "$@";local \
 p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset "$p$varname"
 done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
 'ster=${var___cluster:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__keyuri=${var___keyur'\
 'i:-'"'"'sshagentkms:$USER@$HOST'"'"'};'$p'__username=${var___username:-system'\
-':admin};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HOSTNAME:-};'$p'setup=${var_setup:'\
-'-false};'$p'cert=${var_cert:-false};';local docopt_i=1;[[ $BASH_VERSION =~ \
-^4.3 ]] && docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for varname in \
-"${varnames[@]}"; do declare -p "$p$varname";done;done;}
+':admin};'$p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEA'\
+'PI_HOSTNAME:-};'$p'setup=${var_setup:-false};'$p'cert=${var_cert:-false};'
+local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
+((;docopt_i>0;docopt_i--)); do for varname in "${varnames[@]}"; do declare -p \
+"$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' k8sss`
   eval "$(docopt "$@")"
 
   export KUBECONFIG="$HOME/.kube/config.yaml"
 
-  [[ ! $KUBEAPI_HOSTNAME =~ ^(https?://)?([^:]+) ]] || KUBEAPI_HOSTNAME=${BASH_REMATCH[2]}
+  # shellcheck disable=SC2154
+  if $setup; then
+    [[ $KUBEAPI_URL =~ ^(https?://)?([^:]+)(:[^:]+)? ]] || fatal "Unable to parse KUBEAPI_URL '%s'" "$KUBEAPI_URL"
+    KUBEAPI_HOSTNAME=${BASH_REMATCH[2]}
+    KUBEAPI_URL=${BASH_REMATCH[1]:-"https://"}${BASH_REMATCH[2]}${BASH_REMATCH[3]}
+  fi
   [[ $__keyuri != "sshagentkms:\$USER@\$HOST" ]] || __keyuri=sshagentkms:$(id -un)@$(hostname)
   [[ $__context != \$KUBEAPI_HOSTNAME ]] || __context=$KUBEAPI_HOSTNAME
   [[ $__cluster != \$KUBEAPI_HOSTNAME ]] || __cluster=$KUBEAPI_HOSTNAME
@@ -57,12 +63,13 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
     user_crt=$config_dir/${__username}.crt \
     user_key=$config_dir/${__username}.key
 
-  # shellcheck disable=SC2153,SC2154
+  # shellcheck disable=SC2154
   if $setup; then
     local yesno remote_kube_api_server_ca_fp kube_api_server_ca_fp
     trap 'error "Failed to configure, run with LOGLEVEL=verbose to see more detailed errors"' ERR
     mkdir -p "$config_dir"
-    remote_kube_api_server_ca=$(curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9000/roots.pem")
+    remote_kube_api_server_ca=$(step certificate inspect --insecure --format pem "$KUBEAPI_URL") || \
+      fatal "Unable to retrieve kube-api server certificate from %s" "$KUBEAPI_URL"
     # TOFU for Kubernetes API Server CA
     remote_kube_api_server_ca_fp=$(step certificate fingerprint /dev/stdin <<<"$remote_kube_api_server_ca")
     if [[ -e "$kubeapi_server_ca_crt" ]]; then
@@ -88,7 +95,7 @@ done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
 
     info "Setting up %s" "${KUBECONFIG//"$HOME"/"~"}"
     kubectl config --kubeconfig "$KUBECONFIG" set-cluster "$__cluster" \
-      --server="https://$KUBEAPI_HOSTNAME:6443" \
+      --server="$KUBEAPI_URL" \
       --embed-certs \
       --certificate-authority="$kubeapi_server_ca_crt"
     kubectl config --kubeconfig "$KUBECONFIG" set-credentials "$__username@$__cluster" \
