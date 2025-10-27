@@ -65,7 +65,7 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
 
   # shellcheck disable=SC2154
   if $setup; then
-    local yesno remote_kube_api_server_ca_fp kube_api_server_ca_fp
+    local yesno remote_kube_api_server_ca remote_kube_api_server_ca_fp kube_api_server_ca_fp remote_kube_api_client_ca
     trap 'error "Failed to configure, run with LOGLEVEL=verbose to see more detailed errors"' ERR
     mkdir -p "$config_dir"
     remote_kube_api_server_ca=$(step certificate inspect --insecure --format pem "$KUBEAPI_URL") || \
@@ -91,7 +91,8 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
     printf "%s\n" "$remote_kube_api_server_ca" >"$kubeapi_server_ca_crt"
 
     info "Downloading Kubernetes API Client CA certificate"
-    curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9000/roots.pem" >"$kubeapi_client_ca_crt" 2> >(LOGPROGRAM=curl pipe_verbose)
+    remote_kube_api_client_ca=$(curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9000/roots.pem" 2> >(LOGPROGRAM=curl pipe_verbose))
+    printf "%s\n" "$remote_kube_api_client_ca" >"$kubeapi_client_ca_crt"
 
     info "Setting up %s" "${KUBECONFIG//"$HOME"/"~"}"
     kubectl config --kubeconfig "$KUBECONFIG" set-cluster "$__cluster" \
