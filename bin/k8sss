@@ -68,8 +68,10 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
     local yesno remote_kube_api_server_ca remote_kube_api_server_ca_fp kube_api_server_ca_fp remote_kube_api_client_ca
     trap 'error "Failed to configure, run with LOGLEVEL=verbose to see more detailed errors"' ERR
     mkdir -p "$config_dir"
-    remote_kube_api_server_ca=$(step certificate inspect --insecure --format pem "$KUBEAPI_URL") || \
+    remote_kube_api_server_ca=$(step certificate inspect --insecure --bundle --format pem "$KUBEAPI_URL") || \
       fatal "Unable to retrieve kube-api server certificate from %s" "$KUBEAPI_URL"
+    # We got a bundle now, remove all but the last crt to get the CA
+    remote_kube_api_server_ca=$'-----BEGIN CERTIFICATE-----\n'${remote_kube_api_server_ca##*-----BEGIN CERTIFICATE-----}
     # TOFU for Kubernetes API Server CA
     remote_kube_api_server_ca_fp=$(step certificate fingerprint /dev/stdin <<<"$remote_kube_api_server_ca")
     if [[ -e "$kubeapi_server_ca_crt" ]]; then
