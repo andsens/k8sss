@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck source-path=..
-set -Eeo pipefail; shopt -s inherit_errexit
+set -eo pipefail
 
 export STEPPATH=/home/step
 KUBE_CLIENT_CA_KEY_PATH=$STEPPATH/kube-api-secrets/kube_apiserver_client_ca_key
