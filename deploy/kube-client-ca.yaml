@@ -146,7 +146,7 @@ spec:
       volumes:
       - name: scripts
         configMap:
-          name: scripts
+          name: kube-client-ca-scripts
           defaultMode: 0755
       - name: config
         configMap:

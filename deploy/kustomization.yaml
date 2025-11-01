@@ -5,7 +5,7 @@ resources:
 - kube-client-ca.yaml
 configMapGenerator:
 - files: [setup-kube-client-ca-config.sh]
-  name: scripts
+  name: kube-client-ca-scripts
 - files: [admin.tpl]
   name: kube-client-ca-templates
 - files: [kube-client-ca.json]
