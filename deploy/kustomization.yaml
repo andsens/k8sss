@@ -11,3 +11,5 @@ configMapGenerator:
   name: kube-client-ca-templates
 - files: [kube-client-ca.json]
   name: kube-client-ca-config
+generatorOptions:
+  disableNameSuffixHash: true
