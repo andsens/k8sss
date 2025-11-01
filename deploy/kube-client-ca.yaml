@@ -70,7 +70,7 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: setup-kube-client-ca-config
-        image: ghcr.io/andsens/k8sss-bootstrap:0.1.0
+        image: ghcr.io/andsens/k8sss-bootstrap:0.1.1
         command: [/home/step/scripts/setup-kube-client-ca-config.sh]
         securityContext:
           readOnlyRootFilesystem: true
