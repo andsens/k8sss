@@ -42,25 +42,6 @@ subjects:
 apiVersion: v1
 kind: Service
 metadata:
-  name: kube-client-ca-external
-  labels:
-    app.kubernetes.io/name: smallstep
-    app.kubernetes.io/component: kube-client-ca
-  annotations:
-    coredns.io/hostname: pki-kube.DOMAIN.
-spec:
-  type: LoadBalancer
-  selector:
-    app.kubernetes.io/name: smallstep
-    app.kubernetes.io/component: kube-client-ca
-  ports:
-  - name: api
-    port: 9000
-    targetPort: api
----
-apiVersion: v1
-kind: Service
-metadata:
   name: kube-client-ca-host
   labels:
     app.kubernetes.io/name: smallstep
@@ -103,13 +84,11 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: setup-kube-client-ca-config
-        image: ghcr.io/andsens/phxc-utils
+        image: ghcr.io/andsens/k8sss-bootstrap:0.1.0
         command: [/home/step/scripts/setup-kube-client-ca-config.sh]
         securityContext:
           readOnlyRootFilesystem: true
         env:
-        - name: CLUSTER_DOMAIN
-          value: cluster.domain
         - name: NODENAME
           valueFrom:
             fieldRef:
@@ -171,7 +150,7 @@ spec:
           defaultMode: 0755
       - name: config
         configMap:
-          name: ca-configs
+          name: kube-client-ca-config
       - name: authorized-keys
         hostPath:
           path: /home/admin/.ssh/authorized_keys

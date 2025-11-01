@@ -8,11 +8,12 @@ main() {
   DOC="k8sss - Issue kubernetes client certificates via smallstep
 Usage:
   k8sss setup [options] KUBEAPI_URL
-  k8sss cert [-k KN -u UN] KUBEAPI_HOSTNAME
+  k8sss cert [-k KN -u UN --ca-url URL] KUBEAPI_HOSTNAME
 
 Options:
-  -u --username=UN  K8S username to authenticate as [default: system:admin]
-  -k --keyuri=URI   Smallstep key URI used for authentication
+  -c --ca-url URL   URL to the CA [default: https://\$KUBEAPI_HOSTNAME:9000]
+  -u --username UN  K8S username to authenticate as [default: system:admin]
+  -k --keyuri URI   Smallstep key URI used for authentication
                     [default: sshagentkms:\$USER@\$HOST]
   --context NAME    Name of the context to set up [default: \$KUBEAPI_HOSTNAME]
   --cluster NAME    Name of the cluster to set up [default: \$KUBEAPI_HOSTNAME]
@@ -21,24 +22,26 @@ Options:
 # shellcheck disable=2016,2086,2329,1090,1091,2034
 docopt() { local v='2.0.3'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:506};usage=${DOC:59:86}
-digest=fdf62;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
-'name 1');node_0(){ value __context 0;};node_1(){ value __cluster 1;};node_2(){
-value __keyuri 2;};node_3(){ value __username 3;};node_4(){ value KUBEAPI_URL a
-};node_5(){ value KUBEAPI_HOSTNAME a;};node_6(){ switch setup a:setup;}
-node_7(){ switch cert a:cert;};node_8(){ sequence 6 9 4;};node_9(){ optional 0 1
-};node_10(){ sequence 7 11 5;};node_11(){ optional 2 3;};node_12(){ choice 8 10
-};cat <<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
-"${DOC:59:86}" >&2;exit 1;}';local varnames=(__context __cluster __keyuri \
-__username KUBEAPI_URL KUBEAPI_HOSTNAME setup cert) varname;for varname in \
-"${varnames[@]}"; do unset "var_$varname";done;parse 12 "$@";local \
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:595};usage=${DOC:59:99}
+digest=91889;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
+'name 1' '-c --ca-url 1');node_0(){ value __context 0;};node_1(){ value \
+__cluster 1;};node_2(){ value __keyuri 2;};node_3(){ value __username 3;}
+node_4(){ value __ca_url 4;};node_5(){ value KUBEAPI_URL a;};node_6(){ value \
+KUBEAPI_HOSTNAME a;};node_7(){ switch setup a:setup;};node_8(){ switch cert \
+a:cert;};node_9(){ sequence 7 10 5;};node_10(){ optional 0 1;};node_11(){
+sequence 8 12 6;};node_12(){ optional 2 3 4;};node_13(){ choice 9 11;};cat \
+<<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
+"${DOC:59:99}" >&2;exit 1;}';local varnames=(__context __cluster __keyuri \
+__username __ca_url KUBEAPI_URL KUBEAPI_HOSTNAME setup cert) varname;for \
+varname in "${varnames[@]}"; do unset "var_$varname";done;parse 13 "$@";local \
 p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset "$p$varname"
 done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
 'ster=${var___cluster:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__keyuri=${var___keyur'\
 'i:-'"'"'sshagentkms:$USER@$HOST'"'"'};'$p'__username=${var___username:-system'\
-':admin};'$p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEA'\
-'PI_HOSTNAME:-};'$p'setup=${var_setup:-false};'$p'cert=${var_cert:-false};'
-local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
+':admin};'$p'__ca_url=${var___ca_url:-'"'"'https://$KUBEAPI_HOSTNAME:9000'"'\
+"'};'$p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HO'\
+'STNAME:-};'$p'setup=${var_setup:-false};'$p'cert=${var_cert:-false};';local \
+docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
 ((;docopt_i>0;docopt_i--)); do for varname in "${varnames[@]}"; do declare -p \
 "$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' k8sss`
@@ -55,6 +58,7 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
   [[ $__keyuri != "sshagentkms:\$USER@\$HOST" ]] || __keyuri=sshagentkms:$(id -un)@$(hostname)
   [[ $__context != \$KUBEAPI_HOSTNAME ]] || __context=$KUBEAPI_HOSTNAME
   [[ $__cluster != \$KUBEAPI_HOSTNAME ]] || __cluster=$KUBEAPI_HOSTNAME
+  [[ $__ca_url != https://\$KUBEAPI_HOSTNAME:9000 ]] || __ca_url=https://$KUBEAPI_HOSTNAME:9000
   local config_dir=$HOME/.config/k8sss/${KUBEAPI_HOSTNAME}
   # shellcheck disable=SC2154
   local \
@@ -93,7 +97,7 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
     printf "%s\n" "$remote_kube_api_server_ca" >"$kubeapi_server_ca_crt"
 
     info "Downloading Kubernetes API Client CA certificate"
-    remote_kube_api_client_ca=$(curl -k --no-progress-meter "https://$KUBEAPI_HOSTNAME:9000/roots.pem" 2> >(LOGPROGRAM=curl pipe_verbose))
+    remote_kube_api_client_ca=$(curl -k --no-progress-meter "$__ca_url/roots.pem" 2> >(LOGPROGRAM=curl pipe_verbose))
     printf "%s\n" "$remote_kube_api_client_ca" >"$kubeapi_client_ca_crt"
 
     info "Setting up %s" "${KUBECONFIG//"$HOME"/"~"}"
@@ -107,15 +111,15 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
       --exec-arg="cert" \
       --exec-arg="-k$__keyuri" \
       --exec-arg="-u$__username" \
+      --exec-arg="-c$__ca_url" \
       --exec-arg="$KUBEAPI_HOSTNAME"
     kubectl config --kubeconfig "$HOME/.kube/config.yaml" set-context "$__context" \
       --cluster "$__cluster" --user "$__username@$__cluster"
     rm -f "$user_crt" "$user_key"
   elif $get_kube_cert; then
     trap 'error "Failed to get certificate, run with LOGLEVEL=verbose to see more detailed errors"' ERR
-    local ca_url=https://${KUBEAPI_HOSTNAME}:9000
     if [[ ! -e $user_crt ]] || \
-        step certificate needs-renewal --expires-in 0s "$user_crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
+        step certificate needs-renewal --expires-in 50% "$user_crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
       debug "Renewing client certificate"
       local pubkey_pem admin_jwk kid header payload signature step_logs
       pubkey_pem=$(step kms key "$__keyuri" 2> >(LOGPROGRAM=step pipe_verbose))
@@ -129,7 +133,7 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
       }' <<<"$admin_jwk" | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
       local tries_remaining
       for tries_remaining in {2..0}; do
-        payload=$(jq -n --arg ca_url "$ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
+        payload=$(jq -n --arg ca_url "$__ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
                         --arg jti "$(openssl rand -hex 32)" --arg sub "$__username" '{
           "aud": ($ca_url + "/1.0/sign"),
           "exp": ($now + 30),
@@ -142,7 +146,7 @@ local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
         }' | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
         signature=$(step kms sign --format jws --in <(printf "%s.%s" "$header" "$payload") \
           --kms "${__keyuri%%:*}" "$__keyuri")
-        if step_logs=$(step ca certificate --ca-url="$ca_url" --root="$kubeapi_client_ca_crt" \
+        if step_logs=$(step ca certificate --ca-url="$__ca_url" --root="$kubeapi_client_ca_crt" \
           --token="$header.$payload.$signature" --force \
           "$__username" "$user_crt" "$user_key" 2>&1); then
           break

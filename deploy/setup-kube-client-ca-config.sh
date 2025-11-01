@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 # shellcheck source-path=..
 set -Eeo pipefail; shopt -s inherit_errexit
-PKGROOT=/usr/local/lib/upkg
-source "$PKGROOT/.upkg/records.sh/records.sh"
 
 export STEPPATH=/home/step
 KUBE_CLIENT_CA_KEY_PATH=$STEPPATH/kube-api-secrets/kube_apiserver_client_ca_key
 KUBE_CLIENT_CA_CRT_PATH=$STEPPATH/kube-api-secrets/kube_apiserver_client_ca.crt
 
 main() {
-  local config lb_ipv4
-  lb_ipv4=$(kubectl -n smallstep get svc kube-client-ca-external -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')
-  info "Creating CA config"
+  local config
+  printf "Creating CA config\n" >&2
   config=$(jq \
     --arg uqnodename "${NODENAME%'.local'}" \
-    --arg nodename "$NODENAME" \
-    --arg ipv4 "$lb_ipv4" \
-    --arg domain "pki-kube.$CLUSTER_DOMAIN" '
-      .dnsNames+=([$uqnodename, $nodename, $ipv4, $domain] | unique)
+    --arg nodename "$NODENAME" '
+      .dnsNames+=([$uqnodename, $nodename, $ipv4] | unique)
     ' "$STEPPATH/config-ro/kube-client-ca.json")
+  config=$(setup_authorized_keys "$config")
+
+  printf "%s\n" "$config" >"$STEPPATH/config/ca.json"
+
+  local certs_ram_path=$STEPPATH/secrets
+  printf "Copying kube-client-ca cert & key to RAM backed volume\n" >&2
+  cp "$KUBE_CLIENT_CA_CRT_PATH" "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_CRT_PATH")"
+  cp "$KUBE_CLIENT_CA_KEY_PATH" "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_KEY_PATH")"
+  chown 1000:1000 "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_CRT_PATH")"
+  chown 1000:1000 "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_KEY_PATH")"
+}
+
+setup_authorized_keys() {
+  local config=$1
   # This part is built for converting from authorized_keys format to JWK
   local admin_key admin_jwk
   while IFS= read -r -d $'\n' admin_key || [[ -n $admin_key ]]; do
@@ -31,15 +40,6 @@ main() {
       "options": { "x509": { "templateFile": "/home/step/templates/admin.tpl" } },
     }]' <<<"$config")
   done </home/step/admin_keys
-
-  printf "%s\n" "$config" >"$STEPPATH/config/ca.json"
-
-  local certs_ram_path=$STEPPATH/secrets
-  info "Copying kube-client-ca cert & key to RAM backed volume"
-  cp "$KUBE_CLIENT_CA_CRT_PATH" "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_CRT_PATH")"
-  cp "$KUBE_CLIENT_CA_KEY_PATH" "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_KEY_PATH")"
-  chown 1000:1000 "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_CRT_PATH")"
-  chown 1000:1000 "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_KEY_PATH")"
 }
 
 main "$@"
