@@ -5,7 +5,7 @@ PKGROOT=$(realpath "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/..")
 source "$PKGROOT/.upkg/records.sh/records.sh"
 
 main() {
-  DOC="k8sss - Issue kubernetes client certificates via smallstep
+  DOC="k8sss - Issue Kubernetes client certificates via Smallstep
 Usage:
   k8sss setup [options] KUBEAPI_URL
   k8sss cert [-k KN -u UN --ca-url URL] KUBEAPI_HOSTNAME
@@ -23,7 +23,7 @@ Options:
 docopt() { local v='2.0.3'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
 %d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:595};usage=${DOC:59:99}
-digest=91889;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
+digest=a398d;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
 'name 1' '-c --ca-url 1');node_0(){ value __context 0;};node_1(){ value \
 __cluster 1;};node_2(){ value __keyuri 2;};node_3(){ value __username 3;}
 node_4(){ value __ca_url 4;};node_5(){ value KUBEAPI_URL a;};node_6(){ value \
