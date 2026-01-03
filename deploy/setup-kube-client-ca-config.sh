@@ -8,9 +8,10 @@ KUBE_CLIENT_CA_CRT_PATH=$STEPPATH/kube-api-secrets/kube_apiserver_client_ca.crt
 main() {
   local config
   printf "Creating CA config\n" >&2
+  : "${NODENAME:?}"
   config=$(jq \
-    --arg uqnodename "${NODENAME%'.local'}" \
-    --arg nodename "$NODENAME" '
+    --arg fqnodename "${NODENAME%'.local'}.local" \
+    --arg uqnodename "${NODENAME%'.local'}" '
       .dnsNames+=([$uqnodename, $nodename, $ipv4] | unique)
     ' "$STEPPATH/config-ro/kube-client-ca.json")
   config=$(setup_authorized_keys "$config")
