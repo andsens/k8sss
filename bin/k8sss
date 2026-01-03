@@ -134,7 +134,7 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
       local tries_remaining
       for tries_remaining in {2..0}; do
         payload=$(jq -n --arg ca_url "$__ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
-                        --arg jti "$(openssl rand -hex 32)" --arg sub "$__username" '{
+                        --arg jti "$(step crypto rand --format hex 64)" --arg sub "$__username" '{
           "aud": ($ca_url + "/1.0/sign"),
           "exp": ($now + 30),
           "iat": $now,
