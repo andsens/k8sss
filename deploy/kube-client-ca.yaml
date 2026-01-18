@@ -54,7 +54,6 @@ metadata:
   labels:
     app.kubernetes.io/name: kube-client-ca
 spec:
-  serviceName: kube-client-ca
   selector:
     matchLabels:
       app.kubernetes.io/name: kube-client-ca
