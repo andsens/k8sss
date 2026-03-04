@@ -69,7 +69,7 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: setup-kube-client-ca-config
-        image: ghcr.io/andsens/k8sss-bootstrap:0.1.1
+        image: ghcr.io/andsens/k8sss-bootstrap
         command: [/home/step/scripts/setup-kube-client-ca-config.sh]
         securityContext:
           readOnlyRootFilesystem: true
@@ -98,7 +98,7 @@ spec:
           mountPath: /home/step/config
       containers:
       - name: step-ca
-        image: cr.step.sm/smallstep/step-ca:0.27.2
+        image: cr.step.sm/smallstep/step-ca
         command: [/usr/local/bin/step-ca]
         args: [/home/step/config/ca.json]
         securityContext:
