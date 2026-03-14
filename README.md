@@ -10,7 +10,7 @@ To authenticate with your cluster directly via an HSM see [step-kmsproxy-plugin]
 
 ## Installation
 
-The [Kubernetes manifest](deploy/kube-client-ca.yaml) can be deployed by
+The [Kubernetes manifest](deploy/k8sss.yaml) can be deployed by
 fetching the repo and running `kubectl apply -k deploy/`.  
 The deployment mounts the kube-api client CA certificate as a `hostPath` from
 `/var/lib/rancher/k3s/server/tls/client-ca.crt`, so `k3s` is assumed, see
@@ -56,12 +56,12 @@ endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username
 
 ## Customizing access
 
-The CA [setup script](deploy/setup-kube-client-ca-config.sh) reads each line
+The CA [setup script](deploy/setup-k8sss-config.sh) reads each line
 from `/home/admin/.ssh/authorized_keys` (mounted via `hostPath`) and converts
 it to a JWK that is added to the step-ca provisioner config.
 
 The script and the deployment need to be modified if you wish to change
 how step-ca authenticates users.
 
-... or, you remove the `setup_authorized_keys()` part in the [setup script](deploy/setup-kube-client-ca-config.sh)
-and hardcode your authentication method directly in `deploy/kube-client-ca.json`.
+... or, you remove the `setup_authorized_keys()` part in the [setup script](deploy/setup-k8sss-config.sh)
+and hardcode your authentication method directly in `deploy/k8sss.json`.

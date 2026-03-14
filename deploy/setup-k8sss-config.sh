@@ -13,13 +13,13 @@ main() {
     --arg fqnodename "${NODENAME%'.local'}.local" \
     --arg uqnodename "${NODENAME%'.local'}" '
       .dnsNames+=([$uqnodename, $nodename, $ipv4] | unique)
-    ' "$STEPPATH/config-ro/kube-client-ca.json")
+    ' "$STEPPATH/config-ro/k8sss.json")
   config=$(setup_authorized_keys "$config")
 
   printf "%s\n" "$config" >"$STEPPATH/config/ca.json"
 
   local certs_ram_path=$STEPPATH/secrets
-  printf "Copying kube-client-ca cert & key to RAM backed volume\n" >&2
+  printf "Copying kubernetes client CA cert & key to RAM backed volume\n" >&2
   cp "$KUBE_CLIENT_CA_CRT_PATH" "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_CRT_PATH")"
   cp "$KUBE_CLIENT_CA_KEY_PATH" "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_KEY_PATH")"
   chown 1000:1000 "$certs_ram_path/$(basename "$KUBE_CLIENT_CA_CRT_PATH")"
