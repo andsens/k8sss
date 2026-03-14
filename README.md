@@ -11,7 +11,7 @@ To authenticate with your cluster directly via an HSM see [step-kmsproxy-plugin]
 ## Installation
 
 The [Kubernetes manifest](deploy/k8sss.yaml) can be deployed by
-fetching the repo and running `kubectl apply -k deploy/`.  
+fetching the repo and running `kubectl apply -k deploy/overlays/node-port`.  
 The deployment mounts the kube-api client CA certificate as a `hostPath` from
 `/var/lib/rancher/k3s/server/tls/client-ca.crt`, so `k3s` is assumed, see
 [Customizing access](#customizing-access) for changing how you authenticate.
