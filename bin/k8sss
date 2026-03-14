@@ -3,11 +3,14 @@
 set -eo pipefail; shopt -s inherit_errexit
 PKGROOT=$(realpath "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/..")
 source "$PKGROOT/.upkg/records.sh/records.sh"
+CONFIGDIR=$HOME/.config/k8sss
 
 main() {
   DOC="k8sss - Issue Kubernetes client certificates via Smallstep
 Usage:
   k8sss setup [options] KUBEAPI_URL
+  k8sss rm [--context NAME] KUBEAPI_HOSTNAME
+  k8sss ls
   k8sss cert [-k KN -u UN --ca-url URL] KUBEAPI_HOSTNAME
 
 Options:
@@ -15,35 +18,37 @@ Options:
   -u --username UN  K8S username to authenticate as [default: system:admin]
   -k --keyuri URI   Smallstep key URI used for authentication
                     [default: sshagentkms:\$USER@\$HOST]
-  --context NAME    Name of the context to set up [default: \$KUBEAPI_HOSTNAME]
-  --cluster NAME    Name of the cluster to set up [default: \$KUBEAPI_HOSTNAME]
+  --context NAME    Name of the context add/remove [default: \$KUBEAPI_HOSTNAME]
+  --cluster NAME    Name of the cluster add [default: \$KUBEAPI_HOSTNAME]
 "
 # docopt parser below, refresh this parser with `docopt.sh k8sss`
 # shellcheck disable=2016,2086,2329,1090,1091,2034
 docopt() { local v='2.0.3'; source \
 "$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh" "$v" || { ret=$?;printf -- "exit \
-%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:595};usage=${DOC:59:99}
-digest=a398d;options=(' --context 1' ' --cluster 1' '-k --keyuri 1' '-u --user'\
-'name 1' '-c --ca-url 1');node_0(){ value __context 0;};node_1(){ value \
-__cluster 1;};node_2(){ value __keyuri 2;};node_3(){ value __username 3;}
+%d\n" "$ret";exit "$ret";};set -e;trimmed_doc=${DOC:0:646};usage=${DOC:59:155}
+digest=319e8;options=(' --cluster 1' ' --context 1' '-k --keyuri 1' '-u --user'\
+'name 1' '-c --ca-url 1');node_0(){ value __cluster 0;};node_1(){ value \
+__context 1;};node_2(){ value __keyuri 2;};node_3(){ value __username 3;}
 node_4(){ value __ca_url 4;};node_5(){ value KUBEAPI_URL a;};node_6(){ value \
-KUBEAPI_HOSTNAME a;};node_7(){ switch setup a:setup;};node_8(){ switch cert \
-a:cert;};node_9(){ sequence 7 10 5;};node_10(){ optional 0 1;};node_11(){
-sequence 8 12 6;};node_12(){ optional 2 3 4;};node_13(){ choice 9 11;};cat \
-<<<' docopt_exit() { [[ -n $1 ]] && printf "%s\n" "$1" >&2;printf "%s\n" \
-"${DOC:59:99}" >&2;exit 1;}';local varnames=(__context __cluster __keyuri \
-__username __ca_url KUBEAPI_URL KUBEAPI_HOSTNAME setup cert) varname;for \
-varname in "${varnames[@]}"; do unset "var_$varname";done;parse 13 "$@";local \
-p=${DOCOPT_PREFIX:-''};for varname in "${varnames[@]}"; do unset "$p$varname"
-done;eval $p'__context=${var___context:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__clu'\
-'ster=${var___cluster:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__keyuri=${var___keyur'\
-'i:-'"'"'sshagentkms:$USER@$HOST'"'"'};'$p'__username=${var___username:-system'\
-':admin};'$p'__ca_url=${var___ca_url:-'"'"'https://$KUBEAPI_HOSTNAME:9000'"'\
-"'};'$p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HO'\
-'STNAME:-};'$p'setup=${var_setup:-false};'$p'cert=${var_cert:-false};';local \
-docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
-((;docopt_i>0;docopt_i--)); do for varname in "${varnames[@]}"; do declare -p \
-"$p$varname";done;done;}
+KUBEAPI_HOSTNAME a;};node_7(){ switch setup a:setup;};node_8(){ switch rm a:rm;}
+node_9(){ switch ls a:ls;};node_10(){ switch cert a:cert;};node_11(){ sequence \
+7 12 5;};node_12(){ optional 0;};node_13(){ sequence 8 14 6;};node_14(){
+optional 1;};node_15(){ sequence 10 16 6;};node_16(){ optional 2 3 4;}
+node_17(){ choice 11 13 9 15;};cat <<<' docopt_exit() { [[ -n $1 ]] && printf \
+"%s\n" "$1" >&2;printf "%s\n" "${DOC:59:155}" >&2;exit 1;}';local \
+varnames=(__cluster __context __keyuri __username __ca_url KUBEAPI_URL \
+KUBEAPI_HOSTNAME setup rm ls cert) varname;for varname in "${varnames[@]}"; do
+unset "var_$varname";done;parse 17 "$@";local p=${DOCOPT_PREFIX:-''};for \
+varname in "${varnames[@]}"; do unset "$p$varname";done;eval $p'__cluster=${va'\
+'r___cluster:-'"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__context=${var___context:-'\
+"'"'$KUBEAPI_HOSTNAME'"'"'};'$p'__keyuri=${var___keyuri:-'\
+"'"'sshagentkms:$USER@$HOST'"'"'};'$p'__username=${var___username:-system:admi'\
+'n};'$p'__ca_url=${var___ca_url:-'"'"'https://$KUBEAPI_HOSTNAME:9000'"'"'};'\
+$p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HOSTNAM'\
+'E:-};'$p'setup=${var_setup:-false};'$p'rm=${var_rm:-false};'$p'ls=${var_ls:-f'\
+'alse};'$p'cert=${var_cert:-false};';local docopt_i=1;[[ $BASH_VERSION =~ ^4.3 \
+]] && docopt_i=2;for ((;docopt_i>0;docopt_i--)); do for varname in \
+"${varnames[@]}"; do declare -p "$p$varname";done;done;}
 # docopt parser above, complete command for generating this parser is `docopt.sh --library='"$PKGROOT/.upkg/docopt-lib-v$v/docopt-lib.sh"' k8sss`
   eval "$(docopt "$@")"
 
@@ -59,7 +64,7 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
   [[ $__context != \$KUBEAPI_HOSTNAME ]] || __context=$KUBEAPI_HOSTNAME
   [[ $__cluster != \$KUBEAPI_HOSTNAME ]] || __cluster=$KUBEAPI_HOSTNAME
   [[ $__ca_url != https://\$KUBEAPI_HOSTNAME:9000 ]] || __ca_url=https://$KUBEAPI_HOSTNAME:9000
-  local config_dir=$HOME/.config/k8sss/${KUBEAPI_HOSTNAME}
+  local config_dir=$CONFIGDIR/${KUBEAPI_HOSTNAME}
   # shellcheck disable=SC2154
   local \
     kubeapi_server_ca_crt=$config_dir/server-ca.crt \
@@ -68,10 +73,24 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
     user_key=$config_dir/${__username}.key
 
   # shellcheck disable=SC2154
-  if $setup; then
+  if $ls; then
+    local name
+    for name in "$CONFIGDIR"/*; do
+      [[ ! -d $name ]] || printf "%s\n" "$(basename "$name")"
+    done
+  elif $rm; then
+    local context_data cluster user
+    rm -rf "$CONFIGDIR/${KUBEAPI_HOSTNAME:?}"
+    if context_data=$(kubectl config view -ojson | jq -re --arg name "$__context" '.contexts[] | select(.name == $name)' 2>/dev/null); then
+      ! cluster=$(jq -re '.context.cluster' <<<"$context_data") || kubectl config delete-cluster "$cluster"
+      ! user=$(jq -re '.context.user' <<<"$context_data") || kubectl config delete-user "$user"
+      kubectl config delete-context "$__context"
+    else
+      warning "Unable to find context '%s'. You will have to remove the user, cluster, and context manually" "$__context"
+    fi
+  elif $setup; then
     local yesno remote_kube_api_server_ca remote_kube_api_server_ca_fp kube_api_server_ca_fp remote_kube_api_client_ca
     trap 'error "Failed to configure, run with LOGLEVEL=verbose to see more detailed errors"' ERR
-    mkdir -p "$config_dir"
     remote_kube_api_server_ca=$(step certificate inspect --insecure --bundle --format pem "$KUBEAPI_URL") || \
       fatal "Unable to retrieve kube-api server certificate from %s" "$KUBEAPI_URL"
     # We got a bundle now, remove all but the last crt to get the CA
@@ -94,6 +113,7 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
       [[ $(read -rp 'Do you want to establish that trust now? [y/N]' yesno; echo "$yesno") =~ ^[Yy](es)?$ ]] || \
         { trap '' ERR; fatal "User aborted operation"; }
     fi
+    mkdir -p "$config_dir"
     printf "%s\n" "$remote_kube_api_server_ca" >"$kubeapi_server_ca_crt"
 
     info "Downloading Kubernetes API Client CA certificate"
