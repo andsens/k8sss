@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: k8sss
 images:
 - name: ghcr.io/andsens/k8sss-bootstrap
-  newTag: 0.1.5
+  newTag: 0.2.1
 - name: cr.step.sm/smallstep/step-ca
   newTag: 0.29.0
 resources:
