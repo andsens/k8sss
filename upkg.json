@@ -6,7 +6,7 @@
       "sha256": "fb8671d4870f9133fc5743f2f68f695c7efe11b433b8853daaa2eead9e78b20a"
     },
     {
-      "name": "docopt-lib-v2.0.3",
+      "name": "docopt-lib.sh-v2.0.3",
       "tar": "https://github.com/andsens/docopt.sh/releases/download/v2.0.3/docopt-lib.sh.tar.gz",
       "sha256": "a1322fab61ba153eaa1e8200319629779a634c02423a238f6ab18ebd6a1d7ee1"
     }
