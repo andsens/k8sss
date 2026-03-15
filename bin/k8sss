@@ -86,7 +86,7 @@ $p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HOSTNAM'\
       ! user=$(jq -re '.context.user' <<<"$context_data") || kubectl config delete-user "$user"
       kubectl config delete-context "$__context"
     else
-      warning "Unable to find context '%s'. You will have to remove the user, cluster, and context manually" "$__context"
+      warning "Unable to find context the '%s' in your kubeconfig. You will have to remove the user, cluster, and context manually" "$__context"
     fi
   elif $setup; then
     local yesno remote_kube_api_server_ca remote_kube_api_server_ca_fp kube_api_server_ca_fp remote_kube_api_client_ca
