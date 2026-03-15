@@ -141,33 +141,41 @@ $p'KUBEAPI_URL=${var_KUBEAPI_URL:-};'$p'KUBEAPI_HOSTNAME=${var_KUBEAPI_HOSTNAM'\
     if [[ ! -e $user_crt ]] || \
         step certificate needs-renewal --expires-in 50% "$user_crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
       debug "Renewing client certificate"
-      local pubkey_pem admin_jwk kid header payload signature step_logs
+      local pubkey_pem admin_jwk kid header_json header payload_json signature step_logs
       pubkey_pem=$(step kms key "$__keyuri" 2> >(LOGPROGRAM=step pipe_verbose))
       admin_jwk=$(step crypto jwk create --force --use sig --from-pem=<(printf "%s\n" "$pubkey_pem") \
         /dev/stdout /dev/null 2> >(LOGPROGRAM=step pipe_verbose))
+      debug "JWK:\n%s" "$admin_jwk"
       kid=$(jq -r .kid <<<"$admin_jwk")
-      header=$(jq '{
+      header_json=$(jq '{
         "alg": .alg,
         "kid": .kid,
         "typ": "JWT"
-      }' <<<"$admin_jwk" | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
-      local tries_remaining
+      }' <<<"$admin_jwk")
+      debug "JWT Header:\n%s" "$header_json"
+      header=$(jq -cS . <<<"$header_json" | base64 -w0 | tr -d '=' | tr '/+' '_-')
+      local tries_remaining jwt
       for tries_remaining in {2..0}; do
-        payload=$(jq -n --arg ca_url "$__ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
-                        --arg jti "$(step crypto rand --format hex 64)" --arg sub "$__username" '{
+        payload_json=$(jq -n \
+          --arg ca_url "$__ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
+          --arg jti "$(step crypto rand --format hex 64)" --arg sub "$__username" '{
           "aud": ($ca_url + "/1.0/sign"),
-          "exp": ($now + 30),
+          "exp": ($now + 1),
           "iat": $now,
           "iss": $kid,
           "jti": $jti,
-          "nbf": ($now - 30),
+          "nbf": ($now - 1),
           "sans": [$sub],
           "sub": $sub
-        }' | jq -cS . | base64 -w0 | tr -d '=' | tr '/+' '_-')
+        }')
+        debug "JWT Payload:\n%s" "$payload_json"
+        payload=$(jq -cS . <<<"$payload_json" | base64 -w0 | tr -d '=' | tr '/+' '_-')
         signature=$(step kms sign --format jws --in <(printf "%s.%s" "$header" "$payload") \
           --kms "${__keyuri%%:*}" "$__keyuri")
+        jwt=$header.$payload.$signature
+        debug "JWT: %s" "$jwt"
         if step_logs=$(step ca certificate --ca-url="$__ca_url" --root="$kubeapi_client_ca_crt" \
-          --token="$header.$payload.$signature" --force \
+          --token="$jwt" --force \
           "$__username" "$user_crt" "$user_key" 2>&1); then
           break
         elif (( tries_remaining > 0 )); then
