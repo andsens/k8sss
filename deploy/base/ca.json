@@ -1,6 +1,8 @@
 {
   "address": ":9000",
-  "dnsNames": ["127.0.0.1"],
+  "dnsNames": [
+    "127.0.0.1"
+  ],
   "logger": {
     "format": "text"
   },

@@ -13,10 +13,41 @@ To authenticate with your cluster directly via an HSM see [step-kmsproxy-plugin]
 The [Kubernetes manifest](deploy/k8sss.yaml) can be deployed by
 fetching the repo and running `kubectl apply -k deploy/overlays/node-port`.  
 The deployment mounts the kube-api client CA certificate as a `hostPath` from
-`/var/lib/rancher/k3s/server/tls/client-ca.crt`, so `k3s` is assumed, see
-[Customizing access](#customizing-access) for changing how you authenticate.
+`/var/lib/rancher/k3s/server/tls/client-ca.crt`, so `k3s` is assumed.
 
-The `k8sss` tool can be installed through [μpkg](https://github.com/orbit-online/upkg).
+Create the configmap that configures access using `tools/convert-sshkeys.sh`
+if you want to use your SSH key:
+
+```sh
+$ kubectl -n k8sss create configmap admin-keys --from-literal=admin-keys.json="$(tools/convert-sshkeys.sh authkeys)"
+```
+
+yields
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authorized-keys
+data:
+  admin-keys.json: |-
+    [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "ktBaBXd_64w8bi0Aby5idIYjD8ZjYfcLDYvXXtsXsds",
+        "kid": "CBpOV6qWOvw8iCEsbogrNupLFTiJJpBDzrpLsyD4YC8"
+      },
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "YBCQOOKVRl2K7HiZvhWBKWnsE2esbqBqDj54fjQXJPA",
+        "kid": "mbS3lU-XcyE8ofRXM-_jdyIvXqksHWHytY9V4M5BJho"
+      }
+    ]
+```
+
+The client-side `k8sss` tool can be installed through [μpkg](https://github.com/orbit-online/upkg).
 Check [the latest release](https://github.com/andsens/k8sss/releases/latest) for
 a copy & paste string with the proper shasum.
 
@@ -53,15 +84,3 @@ coredns-77dbf85789-g7qkm   2/2     Running   0          2d15h
 Run `k8sss --help` for details on how to adjust things like the smallstep CA
 endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username
 (`system:admin`), or what key to use for authentication.
-
-## Customizing access
-
-The CA [setup script](deploy/setup-k8sss-config.sh) reads each line
-from `/home/admin/.ssh/authorized_keys` (mounted via `hostPath`) and converts
-it to a JWK that is added to the step-ca provisioner config.
-
-The script and the deployment need to be modified if you wish to change
-how step-ca authenticates users.
-
-... or, you remove the `setup_authorized_keys()` part in the [setup script](deploy/setup-k8sss-config.sh)
-and hardcode your authentication method directly in `deploy/k8sss.json`.

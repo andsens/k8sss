@@ -8,13 +8,11 @@ images:
   newTag: 0.29.0
 resources:
 - namespace.yaml
-- k8sss.yaml
+- deployment.yaml
 configMapGenerator:
-- files: [setup-k8sss-config.sh]
-  name: k8sss-scripts
-- files: [admin.tpl]
-  name: k8sss-templates
-- files: [k8sss.json]
-  name: k8sss-config
+- files:
+  - setup.sh
+  - admin.tpl
+  - ca.json
 generatorOptions:
   disableNameSuffixHash: true

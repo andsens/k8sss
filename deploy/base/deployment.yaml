@@ -1,37 +1,5 @@
 ---
 apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: k8sss
-  labels:
-    app.kubernetes.io/name: k8sss
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: k8sss
-  labels:
-    app.kubernetes.io/name: k8sss
-rules:
-- apiGroups: [""]
-  resources: [services]
-  verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: k8sss
-  labels:
-    app.kubernetes.io/name: k8sss
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: k8sss
-subjects:
-- kind: ServiceAccount
-  name: k8sss
----
-apiVersion: v1
 kind: Service
 metadata:
   name: k8sss
@@ -69,22 +37,26 @@ spec:
       initContainers:
       - name: setup-k8sss-config
         image: ghcr.io/andsens/k8sss-bootstrap
-        command: [/home/step/scripts/setup-k8sss-config.sh]
+        command: [bash]
+        args: [-c, /home/step/setup.sh]
         securityContext:
           readOnlyRootFilesystem: true
         env:
-        - name: NODENAME
+        - name: DNSNAMES
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
         volumeMounts:
-        - name: scripts
-          mountPath: /home/step/scripts
         - name: config
-          mountPath: /home/step/config-ro
-        - name: authorized-keys
-          mountPath: /home/step/admin_keys
+          subPath: setup.sh
+          mountPath: /home/step/setup.sh
+        - name: config
+          subPath: ca.json
+          mountPath: /home/step/ca.json
+        - name: admin-keys
+          mountPath: /home/step/admin-keys.json
           readOnly: true
+          subPath: admin-keys
         - name: k8sss-cert
           mountPath: /home/step/kube-api-secrets/kube_apiserver_client_ca.crt
           readOnly: true
@@ -99,7 +71,7 @@ spec:
       - name: step-ca
         image: cr.step.sm/smallstep/step-ca
         command: [/usr/local/bin/step-ca]
-        args: [/home/step/config/ca.json]
+        args: [/home/step/ca.json]
         securityContext:
           readOnlyRootFilesystem: true
         ports:
@@ -121,27 +93,21 @@ spec:
         - name: secrets
           mountPath: /home/step/secrets
           readOnly: true
-        - name: templates
-          mountPath: /home/step/templates
+        - name: config
+          subPath: admin.tpl
+          mountPath: /home/step/admin.tpl
         - name: config-rw
-          mountPath: /home/step/config
+          subPath: ca.json
+          mountPath: /home/step/ca.json
         - name: database
           mountPath: /home/step/db
       volumes:
-      - name: scripts
-        configMap:
-          name: k8sss-scripts
-          defaultMode: 0755
       - name: config
         configMap:
-          name: k8sss-config
-      - name: authorized-keys
-        hostPath:
-          path: /home/admin/.ssh/authorized_keys
-          type: File
-      - name: templates
+          name: config
+      - name: admin-keys
         configMap:
-          name: k8sss-templates
+          name: admin-keys
       - name: secrets
         emptyDir:
           medium: Memory
