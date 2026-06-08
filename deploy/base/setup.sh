@@ -17,7 +17,7 @@ main() {
        "key": .,
        "options": { "x509": { "templateFile": "/home/step/admin.tpl" } },
       }
-    ]' "$STEPPATH/k8sss.json" >"$STEPPATH/config/ca.json"
+    ]' "$STEPPATH/ca.json" >"$STEPPATH/config/ca.json"
 
   local certs_ram_path=$STEPPATH/secrets
   printf "Copying kubernetes client CA cert & key to RAM backed volume\n" >&2

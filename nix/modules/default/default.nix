@@ -17,7 +17,7 @@ let
           && u.isNormalUser
           && u.uid != null
           && elem "wheel" u.extraGroups
-          && length openssh.authorizedKeys.keys > 0
+          && length u.openssh.authorizedKeys.keys > 0
         ) (attrValues config.users.users)
       )
     )
@@ -91,6 +91,7 @@ in
             type = "NodePort";
             selector."app.kubernetes.io/name" = "k8sss";
             portsByName.api = {
+              port = 9000;
               nodePort = cfg.nodePort;
               targetPort = "api";
             };
@@ -115,7 +116,7 @@ in
             "admin-keys.json" = builtins.toJSON (map builtins.fromJSON cfg.adminKeys);
             "ca.json" = builtins.readFile ../../../deploy/base/ca.json;
             "admin.tpl" = builtins.readFile ../../../deploy/base/admin.tpl;
-            "setup-script.sh" = builtins.readFile ../../../deploy/base/setup.sh;
+            "setup.sh" = builtins.readFile ../../../deploy/base/setup.sh;
           };
         };
         service = {
@@ -154,13 +155,11 @@ in
                 initContainersByName.setup-k8sss-config = {
                   image = "ghcr.io/andsens/k8sss-bootstrap";
                   command = [ "bash" ];
-                  args = [
-                    "-c"
-                    "/home/step/setup.sh"
-                  ];
+                  args = [ "/home/step/setup.sh" ];
                   securityContext = {
                     allowPrivilegeEscalation = false;
                     readOnlyRootFilesystem = true;
+                    capabilities.add = [ "CHOWN" ];
                     capabilities.drop = [ "ALL" ];
                   };
                   envByName.DNSNAMES.value = lib.join "," cfg.dnsNames;
