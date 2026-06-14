@@ -142,12 +142,13 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
     if [[ ! -e $user_crt ]] || \
         step certificate needs-renewal --expires-in 50% "$user_crt" 2>&1 | LOGPROGRAM=step pipe_verbose; then
       debug "Renewing client certificate"
-      local pubkey_pem admin_jwk kid header_json header payload_json signature step_logs
+      local pubkey_pem admin_jwk kid alg header_json header payload_json signature step_logs
       pubkey_pem=$(step kms key "$__keyuri" 2> >(LOGPROGRAM=step pipe_verbose))
       admin_jwk=$(step crypto jwk create --force --use sig --from-pem=<(printf "%s\n" "$pubkey_pem") \
         /dev/stdout /dev/null 2> >(LOGPROGRAM=step pipe_verbose))
       debug "JWK:\n%s" "$admin_jwk"
       kid=$(jq -r .kid <<<"$admin_jwk")
+      alg=$(jq -r .alg <<<"$admin_jwk")
       header_json=$(jq '{
         "alg": .alg,
         "kid": .kid,
@@ -161,18 +162,18 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
           --arg ca_url "$__ca_url" --argjson now "$(date +%s)" --arg kid "$kid" \
           --arg jti "$(step crypto rand --format hex 64)" --arg sub "$__username" '{
           "aud": ($ca_url + "/1.0/sign"),
-          "exp": ($now + 1),
+          "exp": ($now + 1000),
           "iat": $now,
           "iss": $kid,
           "jti": $jti,
-          "nbf": ($now - 1),
+          "nbf": ($now - 1000),
           "sans": [$sub],
           "sub": $sub
         }')
         debug "JWT Payload:\n%s" "$payload_json"
         payload=$(jq -cS . <<<"$payload_json" | base64 -w0 | tr -d '=' | tr '/+' '_-')
         signature=$(step kms sign --format jws --in <(printf "%s.%s" "$header" "$payload") \
-          --kms "${__keyuri%%:*}" "$__keyuri")
+          --kms "${__keyuri%%:*}" "$__keyuri" | fixup_ecdsa_jws "$alg")
         jwt=$header.$payload.$signature
         debug "JWT: %s" "$jwt"
         if step_logs=$(step ca certificate --ca-url="$__ca_url" --root="$kubeapi_client_ca_crt" \
@@ -202,5 +203,95 @@ docopt_i=1;[[ $BASH_VERSION =~ ^4.3 ]] && docopt_i=2;for \
   fi
 }
 
+# step kms sign --format jws should output a JWS-ready signature, but for ECDSA
+# keys it outputs the raw signature bytes in whatever format the underlying KMS
+# plugin uses. The SSH agent plugin (sshagentkms) uses SSH wire format; other
+# plugins may use DER. Neither is what JWS requires.
+#
+# JWT/JWS (RFC 7518 §3.4) requires ECDSA signatures as raw r||s concatenation:
+# two fixed-width big-endian integers, each exactly coord_len bytes, zero-padded.
+# Both DER and SSH wire format add length metadata and may add a leading 0x00
+# byte to r or s when their high bit is set (to keep them positive integers).
+# This function detects the format and normalises to raw r||s.
+#
+# Format detection by size (real-world ECDSA r and s are always close to
+# coord_len bytes, so total encoded size reliably distinguishes the formats):
+#   raw r||s:       exactly coord_len * 2 bytes  →  pass through unchanged
+#   DER SEQUENCE:   > coord_len * 2 bytes, first byte 0x30
+#   SSH wire:       > coord_len * 2 bytes, first byte 0x00 (big-endian length)
+fixup_ecdsa_jws() {
+  local alg=$1 b64 coord_len hex sig_len
+  local i=0 len val_hex raw_hex="" _part seq_len_byte
+  b64=$(cat)
+  # coord_len is the byte width of each of r and s for this curve
+  case $alg in
+    ES256) coord_len=32 ;;  # P-256
+    ES384) coord_len=48 ;;  # P-384
+    ES512) coord_len=66 ;;  # P-521 (521 bits rounds up to 66 bytes)
+    # Non-ECDSA algorithms (e.g. EdDSA) need no conversion
+    *) printf "%s\n" "$b64"; return 0 ;;
+  esac
+  # Decode to hex. od -An -tx1 -v: no address column, single bytes, no
+  # repeated-line abbreviation (*) — the -v is critical since repeated byte
+  # values (e.g. all 0xff) would otherwise be silently collapsed to a single *
+  hex=$(step base64 -d <<<"$b64" | od -An -tx1 -v | tr -d ' \n')
+  sig_len=$(( ${#hex} / 2 ))
+  if (( sig_len == coord_len * 2 )); then
+    # Already raw r||s — nothing to do
+    printf "%s\n" "$b64"
+    return 0
+  elif (( sig_len > coord_len * 2 && 16#${hex:0:2} == 0x30 )); then
+    # DER SEQUENCE { INTEGER r, INTEGER s }
+    # Skip the SEQUENCE tag (0x30) and its length field. The length is normally
+    # one byte, but handle long-form (0x80 | n_bytes) just in case.
+    i=2
+    seq_len_byte=$(( 16#${hex:2:2} ))
+    if (( seq_len_byte & 0x80 )); then
+      i=$(( i + 2 + (seq_len_byte & 0x7f) * 2 ))
+    else
+      i=$(( i + 2 ))
+    fi
+    for _part in r s; do
+      # Each INTEGER: tag 0x02, one-byte length, value
+      (( 16#${hex:$i:2} == 0x02 )) || fatal 'fixup_ecdsa_jws: expected INTEGER tag'
+      i=$(( i + 2 ))
+      len=$(( 16#${hex:$i:2} ))
+      i=$(( i + 2 ))
+      val_hex=${hex:$i:$(( len * 2 ))}
+      i=$(( i + len * 2 ))
+      # DER prepends 0x00 when the high bit is set to keep the integer positive.
+      # Strip it — JWS uses fixed-width unsigned encoding.
+      if (( len > coord_len && 16#${val_hex:0:2} == 0 )); then
+        val_hex=${val_hex:2}
+      fi
+      # Left-pad to exactly coord_len bytes (handles unusually small values)
+      while (( ${#val_hex} < coord_len * 2 )); do val_hex="00${val_hex}"; done
+      raw_hex+=$val_hex
+    done
+  else
+    # SSH wire format: each integer is a big-endian uint32 length followed by
+    # the value, with the same 0x00 high-bit padding convention as DER
+    for _part in r s; do
+      len=$(( 16#${hex:$i:8} ))  # 4-byte / 8 hex-char big-endian length
+      i=$(( i + 8 ))
+      val_hex=${hex:$i:$(( len * 2 ))}
+      i=$(( i + len * 2 ))
+      # Strip leading 0x00 pad byte if present
+      if (( len > coord_len && 16#${val_hex:0:2} == 0 )); then
+        val_hex=${val_hex:2}
+      fi
+      # Left-pad to exactly coord_len bytes
+      while (( ${#val_hex} < coord_len * 2 )); do val_hex="00${val_hex}"; done
+      raw_hex+=$val_hex
+    done
+  fi
+  # Convert hex string to binary and base64url-encode. Binary must flow through
+  # a pipe — capturing it via $() would silently drop null bytes (0x00).
+  local bin_hex=''
+  for (( i=0; i<${#raw_hex}; i+=2 )); do
+    bin_hex+="\\x${raw_hex:$i:2}"
+  done
+  printf '%b' "$bin_hex" | step base64 -u
+}
 
 main "$@"
