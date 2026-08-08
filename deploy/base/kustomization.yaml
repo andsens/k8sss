@@ -10,7 +10,8 @@ resources:
 - namespace.yaml
 - deployment.yaml
 configMapGenerator:
-- files:
+- name: k8sss
+  files:
   - setup.sh
   - admin.tpl
   - ca.json

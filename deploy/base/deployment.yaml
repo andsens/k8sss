@@ -104,7 +104,7 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: config
+          name: k8sss
       - name: admin-keys
         configMap:
           name: admin-keys

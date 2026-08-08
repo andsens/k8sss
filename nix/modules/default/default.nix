@@ -109,7 +109,7 @@ in
           kind = "ConfigMap";
           metadata = {
             namespace = "k8sss";
-            name = "config";
+            name = "k8sss";
             labels."app.kubernetes.io/name" = "k8sss";
           };
           data = {
@@ -232,7 +232,7 @@ in
                   };
                 };
                 volumesByName = {
-                  config.configMap.name = "config";
+                  config.configMap.name = "k8sss";
                   secrets.emptyDir.medium = "Memory";
                   k8sss-cert.hostPath = {
                     path = cfg.clientCaCertPath;
