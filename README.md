@@ -84,3 +84,26 @@ coredns-77dbf85789-g7qkm   2/2     Running   0          2d15h
 Run `k8sss --help` for details on how to adjust things like the smallstep CA
 endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username
 (`system:admin`), or what key to use for authentication.
+
+## Nix
+
+As an alternative to the [manual kubectl deployment](#installation) above,
+import `k8sss.nixosModules.default` on a host running
+[`kubetree`](https://github.com/andsens/nix-kubetree) with
+`kubetree.kubernetes` and `kubetree.k3s` enabled:
+
+```nix
+{
+  imports = [ inputs.k8sss.nixosModules.default ];
+  config = {
+    kubetree.kubernetes.enable = true;
+    kubetree.k3s.enable = true;
+    k8sss = {
+      enable = true;
+      dnsNames = [ "nas" ];
+    };
+  };
+}
+```
+
+For the full list of module options, see [docs/options.md](docs/options.md).

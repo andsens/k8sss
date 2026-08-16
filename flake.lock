@@ -1,5 +1,31 @@
 {
   "nodes": {
+    "docs": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "systems": [
+          "systems"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786899524,
+        "narHash": "sha256-BeIdacPpbmv0SmjlyKAObFv2RnvqQRjAymUrkEUEXWw=",
+        "owner": "andsens",
+        "repo": "nix-docs",
+        "rev": "27d76d2852ca002d9faf7075d49c72f2c6752aef",
+        "type": "github"
+      },
+      "original": {
+        "owner": "andsens",
+        "repo": "nix-docs",
+        "type": "github"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": "nixpkgs-lib"
@@ -90,6 +116,7 @@
     },
     "root": {
       "inputs": {
+        "docs": "docs",
         "flake-parts": "flake-parts",
         "kube-generators": "kube-generators",
         "kubetree": "kubetree",
