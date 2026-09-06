@@ -19,6 +19,7 @@ import (
 	"go.step.sm/crypto/kms"
 	"go.step.sm/crypto/kms/apiv1"
 	"go.step.sm/crypto/kms/sshagentkms"
+	"golang.org/x/crypto/ssh"
 
 	// Every backend registers itself on import and ships a stub for platforms
 	// or build configurations it cannot support, so importing them all keeps
@@ -40,6 +41,9 @@ type signingKey struct {
 	// The SSH agent hashes the message itself, where a plain crypto.Signer
 	// expects a digest. Which one we have decides what we hand to Sign.
 	hashesMessage bool
+	// Set when the agent can be asked for a specific signature algorithm,
+	// which is the only way to get a modern RSA signature out of it.
+	sshAgent ssh.AlgorithmSigner
 }
 
 func openSigningKey(keyURI string) (*signingKey, error) {
@@ -62,13 +66,16 @@ func openSigningKey(keyURI string) (*signingKey, error) {
 		manager.Close()
 		return nil, err
 	}
-	_, hashesMessage := signer.(*sshagentkms.WrappedSSHSigner)
+	wrapped, hashesMessage := signer.(*sshagentkms.WrappedSSHSigner)
 	key := &signingKey{
 		manager:       manager,
 		signer:        signer,
 		public:        public,
 		alg:           alg,
 		hashesMessage: hashesMessage,
+	}
+	if hashesMessage {
+		key.sshAgent, _ = wrapped.Signer.(ssh.AlgorithmSigner)
 	}
 	if key.kid, err = jose.Thumbprint(&jose.JSONWebKey{
 		Key:       public,
@@ -173,7 +180,7 @@ func (k *signingKey) sign(signingInput []byte) ([]byte, error) {
 		digest.Write(signingInput)
 		data = digest.Sum(nil)
 	}
-	raw, err := k.signer.Sign(rand.Reader, data, hash)
+	raw, err := k.rawSign(data, hash)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to sign the token: %w", err)
 	}
@@ -185,4 +192,21 @@ func (k *signingKey) sign(signingInput []byte) ([]byte, error) {
 		return nil, fmt.Errorf("The KMS produced a signature k8sss cannot use: %w", err)
 	}
 	return signature, nil
+}
+
+// rawSign asks the backend for a signature over data, which is the message
+// itself for an SSH agent and a digest for everything else.
+//
+// An SSH agent defaults to the legacy ssh-rsa algorithm, whose SHA-1 digest
+// cannot back an RS256 token, so RSA keys have to name rsa-sha2-256
+// explicitly. Every other key type has only one signature algorithm.
+func (k *signingKey) rawSign(data []byte, hash crypto.Hash) ([]byte, error) {
+	if k.sshAgent != nil && k.alg == "RS256" {
+		signature, err := k.sshAgent.SignWithAlgorithm(rand.Reader, data, ssh.KeyAlgoRSASHA256)
+		if err != nil {
+			return nil, err
+		}
+		return signature.Blob, nil
+	}
+	return k.signer.Sign(rand.Reader, data, hash)
 }
