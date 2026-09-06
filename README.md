@@ -49,17 +49,25 @@ data:
 
 The client-side `k8sss` tool can be installed through [μpkg](https://github.com/orbit-online/upkg).
 Check [the latest release](https://github.com/andsens/k8sss/releases/latest) for
-a copy & paste string with the proper shasum.
+a copy & paste string with the proper shasum. The manifest covers Linux and
+macOS on both amd64 and arm64, and μpkg picks the binary matching the machine.
 
 ```
 # DON'T COPY THIS, SEE THE LATEST RELEASE
-$ upkg add -g 'https://github.com/andsens/k8sss/releases/download/v0.0.0/k8sss.tar.gz' f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2
-upkg: Added 'https://github.com/andsens/k8sss/releases/download/v0.0.0/k8sss.tar.gz'
+$ upkg add -g 'https://github.com/andsens/k8sss/releases/download/v0.0.0/k8sss.upkg.json' f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2
+upkg: Added 'https://github.com/andsens/k8sss/releases/download/v0.0.0/k8sss.upkg.json'
 $ k8sss --help
-k8sss - Issue Kubernetes client certificates via smallstep
+k8sss - Issue Kubernetes client certificates via Smallstep
 Usage:
 ...
 ```
+
+On Linux, YubiKey and PKCS#11 keys need the pcsc-lite runtime library
+(`libpcsclite1` on Debian and Ubuntu); macOS ships it as part of the system.
+SSH agent and TPM keys work without it.
+
+Alternatively `nix profile install github:andsens/k8sss` or, to build from a
+checkout, `go build .`.
 
 ## Client setup
 
@@ -72,9 +80,9 @@ The root certificate fingerprint is f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7
 Do you want to establish that trust now? [y/N]y
 k8sss: Downloading Kubernetes API Client CA certificate
 k8sss: Setting up ~/.kube/config.yaml
-Cluster "nas" set.
-User "system:admin@nas" set.
-Context "nas" modified.
+k8sss: Cluster "nas" set
+k8sss: User "system:admin@nas" set
+k8sss: Context "nas" set
 
 $ kubectl --context nas -n kube-system get pod
 NAME                       READY   STATUS    RESTARTS   AGE

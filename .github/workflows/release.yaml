@@ -8,6 +8,7 @@ jobs:
   test:
     uses: ./.github/workflows/test.yaml
     secrets: inherit
+
   build-bootstrap:
     uses: ./.github/workflows/build-bootstrap.yaml
     permissions:
@@ -16,13 +17,94 @@ jobs:
       attestations: write
       id-token: write
     secrets: inherit
+
+  # cgo rules out cross compiling, so every platform builds on its own runner.
+  build:
+    strategy:
+      matrix:
+        include:
+        - runner: ubuntu-latest
+        - runner: ubuntu-24.04-arm
+        - runner: macos-14
+        - runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Install pcsclite
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
+    # Naming the binary after uname is what lets the upkg manifest below match
+    # it to a machine, since upkg selects on `uname -s`/`uname -m` too.
+    - name: Build
+      run: |
+        go build -trimpath -ldflags=-s -o "k8sss-$(uname -s)-$(uname -m)" .
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: k8sss-${{ matrix.runner }}
+        path: k8sss-*
+        if-no-files-found: error
+
   release:
-    needs: [test]
+    needs: [test, build]
     permissions:
       contents: write
     runs-on: ubuntu-latest
     name: Create GitHub release
     steps:
-    - uses: orbit-online/upkg-release@v1
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Download binaries
+      uses: actions/download-artifact@v4
       with:
-        paths: bin LICENSE README.md
+        path: dist
+        merge-multiple: true
+    # One manifest covers every platform: upkg installs only the dependency
+    # whose os/arch matches the machine, so a single install string works
+    # everywhere.
+    - name: Build the upkg manifest
+      run: |
+        base="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+        for binary in dist/k8sss-*; do
+          name=$(basename "$binary")
+          os_arch=${name#k8sss-}
+          jq -n \
+            --arg file "$base/$name" \
+            --arg sha256 "$(sha256sum "$binary" | cut -d' ' -f1)" \
+            --arg os_arch "${os_arch%%-*}/${os_arch#*-}" \
+            '{file: $file, sha256: $sha256, name: "k8sss", "os/arch": $os_arch}'
+        done | jq -s \
+          --arg version "${{ github.ref_name }}" \
+          '{
+            "$schema": "https://schemas.orbit.dev/upkg/upkg-v0.31.1.schema.json",
+            name: "k8sss",
+            version: $version,
+            bin: [".upkg/k8sss"],
+            dependencies: .
+          }' > k8sss.upkg.json
+        cat k8sss.upkg.json
+    - name: Create the release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        manifest_sha=$(sha256sum k8sss.upkg.json | cut -d' ' -f1)
+        {
+          echo "## Installation"
+          echo
+          echo '```'
+          echo "upkg add -g '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/k8sss.upkg.json' $manifest_sha"
+          echo '```'
+          echo
+          echo "On Linux the binary needs the pcsc-lite runtime library"
+          echo "(\`libpcsclite1\` on Debian and Ubuntu) for YubiKey and PKCS#11"
+          echo "support. macOS provides it as part of the system."
+        } > notes.md
+        gh release create "${{ github.ref_name }}" \
+          --title "${{ github.ref_name }}" \
+          --notes-file notes.md \
+          k8sss.upkg.json dist/k8sss-*

@@ -7,12 +7,39 @@ on:
   workflow_call: {}
 
 jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    # The YubiKey and PKCS#11 backends are cgo and need the smart card library
+    # to build. Everything else in the binary is pure Go.
+    - name: Install pcsclite
+      run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
+    - name: Check formatting
+      run: |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "These files need gofmt:"
+          echo "$unformatted"
+          exit 1
+        fi
+    - name: Vet
+      run: go vet ./...
+    - name: Test
+      run: go test -race ./...
+    - name: Build
+      run: go build ./...
+
   lint:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    - uses: orbit-online/upkg-install@v1
     - name: Run ShellCheck
       uses: ludeeus/action-shellcheck@master
       env:

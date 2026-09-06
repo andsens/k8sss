@@ -39,7 +39,12 @@
         systems = import systems;
         flake.nixosModules.default = importApply ./nix/modules/default { inherit self inputs; };
         perSystem =
-          { pkgs, lib, ... }:
+          {
+            pkgs,
+            lib,
+            config,
+            ...
+          }:
           let
             options-docs = inputs.docs.lib.docs.options {
               inherit pkgs;
@@ -53,7 +58,21 @@
               inherit pkgs;
               paths."docs/options.md" = options-docs;
             };
-            packages.options-docs = options-docs;
+            packages = {
+              inherit options-docs;
+              default = config.packages.k8sss;
+              # YubiKey and PKCS#11 keys need cgo, which on Linux means
+              # pcsclite. macOS reaches the same readers through a system
+              # framework and needs nothing extra.
+              k8sss = pkgs.buildGo126Module {
+                name = "k8sss";
+                meta.mainProgram = "k8sss";
+                src = ./.;
+                vendorHash = "sha256-xt+fDIdeBLo/xQrEBwDcd7Wnm6FzEkd+i5JqpvZR9fc=";
+                nativeBuildInputs = lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.pkg-config;
+                buildInputs = lib.optional pkgs.stdenv.hostPlatform.isLinux (lib.getDev pkgs.pcsclite);
+              };
+            };
           };
       }
     );
