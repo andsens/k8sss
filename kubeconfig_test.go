@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 
+	docopt "github.com/docopt/docopt-go"
+
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -59,6 +61,29 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	want := []string{"cert", "-ksshagentkms:tester@workstation", "-usystem:admin", "-chttps://nas:9000", "nas"}
 	if !slices.Equal(authInfo.Exec.Args, want) {
 		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, want)
+	}
+
+	// Feed the arguments that were just written back through the parser. This
+	// is the seam kubectl uses, and asserting the shape at both ends
+	// separately would not catch the two drifting together.
+	opts, err := docopt.ParseArgs(usage, authInfo.Exec.Args, "")
+	if err != nil {
+		t.Fatalf("k8sss cannot parse the arguments it wrote: %v", err)
+	}
+	var parsed params
+	if err := opts.Bind(&parsed); err != nil {
+		t.Fatalf("binding: %v", err)
+	}
+	if err := parsed.resolve(); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !parsed.Cert {
+		t.Error("the written arguments do not select the cert command")
+	}
+	if parsed.KeyURI != p.KeyURI || parsed.Username != p.Username ||
+		parsed.CAURL != p.CAURL || parsed.KubeAPIHostname != p.KubeAPIHostname {
+		t.Errorf("round trip lost something: got %+v, want keyuri=%q username=%q ca=%q host=%q",
+			parsed, p.KeyURI, p.Username, p.CAURL, p.KubeAPIHostname)
 	}
 
 	context, ok := config.Contexts["nas"]
