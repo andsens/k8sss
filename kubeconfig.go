@@ -63,9 +63,7 @@ func writeKubeconfig(p *params, pth *paths, serverCA []byte) error {
 	config.Contexts[p.Context] = context
 	slog.Info(fmt.Sprintf("Context %q set", p.Context))
 
-	if err := os.MkdirAll(filepath.Dir(pth.kubeconfig), 0o755); err != nil {
-		return fmt.Errorf("Unable to create %s: %w", filepath.Dir(pth.kubeconfig), err)
-	}
+	// WriteToFile creates the directory and writes with 0600 itself.
 	if err := clientcmd.WriteToFile(*config, pth.kubeconfig); err != nil {
 		return fmt.Errorf("Unable to write %s: %w", pth.kubeconfig, err)
 	}

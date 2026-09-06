@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	docopt "github.com/docopt/docopt-go"
 )
@@ -146,6 +147,21 @@ func (p *params) resolve() error {
 	}
 	if p.CAURL == caURLPlaceholder {
 		p.CAURL = "https://" + p.KubeAPIHostname + ":9000"
+	}
+	// Both of these become path elements under ~/.config/k8sss, and rm
+	// removes the directory they name, so neither may point elsewhere.
+	if err := checkPathElement("KUBEAPI_HOSTNAME", p.KubeAPIHostname); err != nil {
+		return err
+	}
+	return checkPathElement("--username", p.Username)
+}
+
+func checkPathElement(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	if value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
+		return fmt.Errorf("%s '%s' may not be a path", name, value)
 	}
 	return nil
 }

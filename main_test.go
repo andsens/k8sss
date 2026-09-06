@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	docopt "github.com/docopt/docopt-go"
+)
 
 func TestResolveDerivesTheHostnameFromTheURL(t *testing.T) {
 	for _, tc := range []struct {
@@ -79,5 +83,83 @@ func newSetupParams(url string) *params {
 		Username:   "system:admin",
 		Context:    hostnamePlaceholder,
 		Cluster:    hostnamePlaceholder,
+	}
+}
+
+// kubectl invokes the plugin with exactly the argv `k8sss setup` wrote into
+// the kubeconfig: short options with the value attached, values containing
+// colons, slashes and at-signs.
+func TestParsesTheExecPluginArgv(t *testing.T) {
+	argv := []string{
+		"cert",
+		"-ksshagentkms:tester@workstation",
+		"-usystem:admin",
+		"-chttps://nas:9000",
+		"nas",
+	}
+	opts, err := docopt.ParseArgs(usage, argv, "")
+	if err != nil {
+		t.Fatalf("parsing %q: %v", argv, err)
+	}
+	var p params
+	if err := opts.Bind(&p); err != nil {
+		t.Fatalf("binding: %v", err)
+	}
+	if err := p.resolve(); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !p.Cert {
+		t.Error("the cert command was not selected")
+	}
+	if p.KeyURI != "sshagentkms:tester@workstation" {
+		t.Errorf("keyuri: got %q", p.KeyURI)
+	}
+	if p.Username != "system:admin" {
+		t.Errorf("username: got %q", p.Username)
+	}
+	if p.CAURL != "https://nas:9000" {
+		t.Errorf("ca-url: got %q", p.CAURL)
+	}
+	if p.KubeAPIHostname != "nas" {
+		t.Errorf("hostname: got %q", p.KubeAPIHostname)
+	}
+}
+
+// The hostname and username become path elements under ~/.config/k8sss, and
+// rm removes the directory they name.
+func TestResolveRejectsPathsInNamesUsedAsDirectories(t *testing.T) {
+	for _, tc := range []struct{ hostname, username string }{
+		{"../../etc", "system:admin"},
+		{"..", "system:admin"},
+		{".", "system:admin"},
+		{"a/b", "system:admin"},
+		{"nas", "../../root"},
+		{"nas", "a/b"},
+	} {
+		p := &params{
+			KubeAPIHostname: tc.hostname,
+			Username:        tc.username,
+			CAURL:           caURLPlaceholder,
+			KeyURI:          "sshagentkms:tester@workstation",
+			Context:         hostnamePlaceholder,
+			Cluster:         hostnamePlaceholder,
+		}
+		if err := p.resolve(); err == nil {
+			t.Errorf("hostname %q username %q was accepted", tc.hostname, tc.username)
+		}
+	}
+}
+
+func TestResolveAcceptsOrdinaryNames(t *testing.T) {
+	p := &params{
+		KubeAPIHostname: "k8s.example.com",
+		Username:        "system:admin",
+		CAURL:           caURLPlaceholder,
+		KeyURI:          "sshagentkms:tester@workstation",
+		Context:         hostnamePlaceholder,
+		Cluster:         hostnamePlaceholder,
+	}
+	if err := p.resolve(); err != nil {
+		t.Errorf("resolve: %v", err)
 	}
 }
