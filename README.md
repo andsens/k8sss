@@ -62,9 +62,10 @@ Usage:
 ...
 ```
 
-On Linux, YubiKey and PKCS#11 keys need the pcsc-lite runtime library
-(`libpcsclite1` on Debian and Ubuntu); macOS ships it as part of the system.
-SSH agent and TPM keys work without it.
+The Linux binaries link against pcsc-lite for YubiKey and PKCS#11 support, so
+they need `libpcsclite1` (Debian and Ubuntu) or `pcsc-lite` installed even when
+authenticating with an SSH agent or TPM key. macOS reaches smart card readers
+through a system framework and needs nothing extra.
 
 Alternatively `nix profile install github:andsens/k8sss` or, to build from a
 checkout, `go build .`.

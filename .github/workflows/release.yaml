@@ -18,15 +18,32 @@ jobs:
       id-token: write
     secrets: inherit
 
-  # cgo rules out cross compiling, so every platform builds on its own runner.
+  # The binary is named for the `uname -s`/`uname -m` of the machine it is
+  # meant for, which is what the upkg manifest below selects on.
+  #
+  # cgo means Linux has to build on a runner of its own architecture. macOS
+  # ships a universal toolchain, so one runner covers both architectures; the
+  # -arch flag is passed for each of them rather than only for the one being
+  # cross compiled, which keeps this working whichever architecture the runner
+  # itself happens to be.
   build:
     strategy:
       matrix:
         include:
         - runner: ubuntu-latest
+          target: Linux-x86_64
+          goarch: amd64
         - runner: ubuntu-24.04-arm
-        - runner: macos-14
-        - runner: macos-13
+          target: Linux-aarch64
+          goarch: arm64
+        - runner: macos-15
+          target: Darwin-arm64
+          goarch: arm64
+          cgoarch: -arch arm64
+        - runner: macos-15
+          target: Darwin-x86_64
+          goarch: amd64
+          cgoarch: -arch x86_64
     runs-on: ${{ matrix.runner }}
     steps:
     - name: Checkout
@@ -38,16 +55,20 @@ jobs:
     - name: Install pcsclite
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
-    # Naming the binary after uname is what lets the upkg manifest below match
-    # it to a machine, since upkg selects on `uname -s`/`uname -m` too.
     - name: Build
-      run: |
-        go build -trimpath -ldflags=-s -o "k8sss-$(uname -s)-$(uname -m)" .
+      env:
+        CGO_ENABLED: "1"
+        GOARCH: ${{ matrix.goarch }}
+        CGO_CFLAGS: ${{ matrix.cgoarch }}
+        CGO_LDFLAGS: ${{ matrix.cgoarch }}
+      run: go build -trimpath -ldflags=-s -o "k8sss-${{ matrix.target }}" .
+    - name: Check that the binary is for the right architecture
+      run: file "k8sss-${{ matrix.target }}"
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: k8sss-${{ matrix.runner }}
-        path: k8sss-*
+        name: k8sss-${{ matrix.target }}
+        path: k8sss-${{ matrix.target }}
         if-no-files-found: error
 
   release:
@@ -100,9 +121,10 @@ jobs:
           echo "upkg add -g '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/k8sss.upkg.json' $manifest_sha"
           echo '```'
           echo
-          echo "On Linux the binary needs the pcsc-lite runtime library"
-          echo "(\`libpcsclite1\` on Debian and Ubuntu) for YubiKey and PKCS#11"
-          echo "support. macOS provides it as part of the system."
+          echo "The Linux binaries link against pcsc-lite for YubiKey and PKCS#11"
+          echo "support, so they need \`libpcsclite1\` (Debian and Ubuntu) or"
+          echo "\`pcsc-lite\` installed even when authenticating with an SSH agent"
+          echo "or TPM key. macOS needs nothing extra."
         } > notes.md
         gh release create "${{ github.ref_name }}" \
           --title "${{ github.ref_name }}" \
