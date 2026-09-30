@@ -37,31 +37,34 @@ type signingKey struct {
 	alg     jose.SignatureAlgorithm
 }
 
-func openSigningKey(keyURI string) (*signingKey, error) {
+func openSigningKey(keyURI string) (_ *signingKey, err error) {
 	manager, err := kms.New(context.Background(), apiv1.Options{URI: keyURI})
 	if err != nil {
 		return nil, fmt.Errorf("Unable to open the KMS for '%s': %w", keyURI, err)
 	}
+	// The caller only gets something to Close when this succeeds.
+	defer func() {
+		if err != nil {
+			manager.Close()
+		}
+	}()
 	key := &signingKey{manager: manager}
 	public, err := manager.GetPublicKey(&apiv1.GetPublicKeyRequest{Name: keyURI})
 	if err != nil {
-		manager.Close()
 		return nil, fmt.Errorf("Unable to read the public key for '%s': %w", keyURI, err)
 	}
 	if key.alg, err = algorithmFor(public); err != nil {
-		manager.Close()
 		return nil, err
 	}
 	signer, err := manager.CreateSigner(&apiv1.CreateSignerRequest{SigningKey: keyURI})
 	if err != nil {
-		manager.Close()
 		return nil, fmt.Errorf("Unable to create a signer for '%s': %w", keyURI, err)
 	}
 	if wrapped, ok := signer.(*sshagentkms.WrappedSSHSigner); ok {
 		agent, ok := wrapped.Signer.(ssh.AlgorithmSigner)
 		if !ok {
-			manager.Close()
-			return nil, fmt.Errorf("The SSH agent holding '%s' cannot be asked for a signature algorithm", keyURI)
+			err = fmt.Errorf("The SSH agent holding '%s' cannot be asked for a signature algorithm", keyURI)
+			return nil, err
 		}
 		key.OpaqueSigner = &sshAgentSigner{
 			signer: agent,

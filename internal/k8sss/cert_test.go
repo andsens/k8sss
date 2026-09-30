@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/smallstep/certificates/api"
 	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/x509util"
 )
 
 // testCA issues certificates for the tests, standing in for step-ca.
@@ -160,6 +162,24 @@ func startCA(t *testing.T, ca *testCA, authorized crypto.PublicKey) *standInCA {
 		if request.CsrPEM.Subject.CommonName != claims.Subject {
 			http.Error(w, `{"message":"common name does not match the token"}`, http.StatusForbidden)
 			return
+		}
+		// step-ca checks the CSR's names against the token's sans claim after
+		// running both through the same classifier. A name like
+		// "system:admin" parses as a URI rather than a DNS name, so the CSR
+		// has to be built the same way the CA reads the claim.
+		dnsNames, ips, emails, uris := x509util.SplitSANs(claims.SANS)
+		if !slices.Equal(request.CsrPEM.DNSNames, dnsNames) ||
+			!slices.Equal(request.CsrPEM.EmailAddresses, emails) ||
+			len(request.CsrPEM.IPAddresses) != len(ips) ||
+			len(request.CsrPEM.URIs) != len(uris) {
+			http.Error(w, `{"message":"csr names do not match the token sans"}`, http.StatusForbidden)
+			return
+		}
+		for i, uri := range uris {
+			if request.CsrPEM.URIs[i].String() != uri.String() {
+				http.Error(w, `{"message":"csr uri does not match the token sans"}`, http.StatusForbidden)
+				return
+			}
 		}
 		leaf := ca.issue(t, request.CsrPEM.Subject.CommonName, time.Now(), time.Now().Add(30*time.Minute), request.CsrPEM.PublicKey)
 		w.Header().Set("Content-Type", "application/json")
