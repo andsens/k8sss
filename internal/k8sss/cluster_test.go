@@ -1,4 +1,4 @@
-package main
+package k8sss
 
 import (
 	"os"
@@ -6,14 +6,12 @@ import (
 	"slices"
 	"testing"
 
-	docopt "github.com/docopt/docopt-go"
-
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
 
-func testParams() *params {
-	return &params{
+func clusterParams() *Params {
+	return &Params{
 		KubeAPIURL:      "https://nas:6443",
 		KubeAPIHostname: "nas",
 		CAURL:           "https://nas:9000",
@@ -24,12 +22,23 @@ func testParams() *params {
 	}
 }
 
-func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
-	dir := t.TempDir()
-	pth := paths{kubeconfig: filepath.Join(dir, "config.yaml")}
-	p := testParams()
+// testHome points the config and kubeconfig paths at a temporary directory, so
+// the tests exercise the real path layout.
+func testHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return home
+}
 
-	if err := writeKubeconfig(p, &pth, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")); err != nil {
+func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
+	testHome(t)
+	p := clusterParams()
+	pth, err := p.paths()
+	if err != nil {
+		t.Fatalf("paths: %v", err)
+	}
+	if err := writeKubeconfig(p, pth, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
@@ -42,18 +51,15 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 		t.Fatal("no cluster was written")
 	}
 	if cluster.Server != "https://nas:6443" {
-		t.Errorf("server: got %q, want %q", cluster.Server, "https://nas:6443")
+		t.Errorf("server: got %q", cluster.Server)
 	}
 	if len(cluster.CertificateAuthorityData) == 0 {
 		t.Error("the CA certificate was not embedded")
 	}
 
 	authInfo, ok := config.AuthInfos["system:admin@nas"]
-	if !ok {
-		t.Fatal("no user was written")
-	}
-	if authInfo.Exec == nil {
-		t.Fatal("the user has no exec credential plugin")
+	if !ok || authInfo.Exec == nil {
+		t.Fatal("no user with an exec credential plugin was written")
 	}
 	if authInfo.Exec.APIVersion != "client.authentication.k8s.io/v1beta1" {
 		t.Errorf("exec api version: got %q", authInfo.Exec.APIVersion)
@@ -66,24 +72,13 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	// Feed the arguments that were just written back through the parser. This
 	// is the seam kubectl uses, and asserting the shape at both ends
 	// separately would not catch the two drifting together.
-	opts, err := docopt.ParseArgs(usage, authInfo.Exec.Args, "")
+	parsed, err := parseArgv(authInfo.Exec.Args)
 	if err != nil {
 		t.Fatalf("k8sss cannot parse the arguments it wrote: %v", err)
 	}
-	var parsed params
-	if err := opts.Bind(&parsed); err != nil {
-		t.Fatalf("binding: %v", err)
-	}
-	if err := parsed.resolve(); err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if !parsed.Cert {
-		t.Error("the written arguments do not select the cert command")
-	}
-	if parsed.KeyURI != p.KeyURI || parsed.Username != p.Username ||
+	if !parsed.Cert || parsed.KeyURI != p.KeyURI || parsed.Username != p.Username ||
 		parsed.CAURL != p.CAURL || parsed.KubeAPIHostname != p.KubeAPIHostname {
-		t.Errorf("round trip lost something: got %+v, want keyuri=%q username=%q ca=%q host=%q",
-			parsed, p.KeyURI, p.Username, p.CAURL, p.KubeAPIHostname)
+		t.Errorf("round trip lost something: %+v", parsed)
 	}
 
 	context, ok := config.Contexts["nas"]
@@ -98,9 +93,12 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 // Editing one cluster must not disturb anything else in the file, the way
 // `kubectl config set-cluster` would not.
 func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
-	dir := t.TempDir()
-	pth := paths{kubeconfig: filepath.Join(dir, "config.yaml")}
-
+	testHome(t)
+	p := clusterParams()
+	pth, err := p.paths()
+	if err != nil {
+		t.Fatalf("paths: %v", err)
+	}
 	existing := api.NewConfig()
 	existing.Clusters["other"] = &api.Cluster{Server: "https://other:6443"}
 	existing.Contexts["other"] = &api.Context{Cluster: "other", AuthInfo: "someone"}
@@ -111,7 +109,7 @@ func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 		t.Fatalf("writing kubeconfig: %v", err)
 	}
 
-	if err := writeKubeconfig(testParams(), &pth, []byte("ca")); err != nil {
+	if err := writeKubeconfig(p, pth, []byte("ca")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
@@ -129,22 +127,22 @@ func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 	}
 }
 
-func TestRemoveClusterDeletesEverythingItAdded(t *testing.T) {
-	dir := t.TempDir()
-	pth := paths{
-		dir:        filepath.Join(dir, "nas"),
-		kubeconfig: filepath.Join(dir, "config.yaml"),
+func TestRemoveDeletesEverythingItAdded(t *testing.T) {
+	testHome(t)
+	p := clusterParams()
+	pth, err := p.paths()
+	if err != nil {
+		t.Fatalf("paths: %v", err)
 	}
 	if err := os.MkdirAll(pth.dir, 0o700); err != nil {
 		t.Fatalf("creating cluster directory: %v", err)
 	}
-	p := testParams()
-	if err := writeKubeconfig(p, &pth, []byte("ca")); err != nil {
+	if err := writeKubeconfig(p, pth, []byte("ca")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 
-	if err := removeCluster(p, &pth, dir); err != nil {
-		t.Fatalf("removeCluster: %v", err)
+	if err := Remove(p); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 	if _, err := os.Stat(pth.dir); !os.IsNotExist(err) {
 		t.Error("the cluster directory was left behind")
@@ -158,22 +156,35 @@ func TestRemoveClusterDeletesEverythingItAdded(t *testing.T) {
 	}
 }
 
-// Refusing an empty hostname keeps rm from wiping the whole config directory.
-func TestRemoveClusterRefusesAnEmptyHostname(t *testing.T) {
-	dir := t.TempDir()
-	p := testParams()
+// Refusing an empty hostname keeps Remove from wiping the whole config
+// directory.
+func TestRemoveRefusesAnEmptyHostname(t *testing.T) {
+	home := testHome(t)
+	p := clusterParams()
 	p.KubeAPIHostname = ""
-	pth := paths{dir: dir, kubeconfig: filepath.Join(dir, "config.yaml")}
-	if err := removeCluster(p, &pth, dir); err == nil {
+	if err := Remove(p); err == nil {
 		t.Error("expected an error for an empty hostname")
 	}
-	if _, err := os.Stat(dir); err != nil {
-		t.Error("the config directory was removed")
+	if _, err := os.Stat(home); err != nil {
+		t.Error("the home directory was removed")
 	}
 }
 
-func TestListClustersOnAMissingDirectory(t *testing.T) {
-	if err := listClusters(filepath.Join(t.TempDir(), "absent")); err != nil {
-		t.Errorf("listClusters: %v", err)
+func TestListOnAMissingDirectory(t *testing.T) {
+	testHome(t)
+	if err := List(clusterParams()); err != nil {
+		t.Errorf("List: %v", err)
+	}
+}
+
+func TestListNamesTheConfiguredClusters(t *testing.T) {
+	home := testHome(t)
+	for _, name := range []string{"nas", "kube.example.com"} {
+		if err := os.MkdirAll(filepath.Join(home, ".config", "k8sss", name), 0o700); err != nil {
+			t.Fatalf("creating %s: %v", name, err)
+		}
+	}
+	if err := List(clusterParams()); err != nil {
+		t.Errorf("List: %v", err)
 	}
 }

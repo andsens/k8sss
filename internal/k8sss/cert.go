@@ -1,4 +1,4 @@
-package main
+package k8sss
 
 import (
 	"crypto/ecdsa"
@@ -12,6 +12,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/smallstep/certificates/api"
+	"github.com/smallstep/certificates/ca"
+	"go.step.sm/crypto/pemutil"
 	"go.step.sm/crypto/x509util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientauth "k8s.io/client-go/pkg/apis/clientauthentication/v1beta1"
@@ -22,16 +25,20 @@ const (
 	renewBackoff  = 5 * time.Second
 )
 
-// issueCert implements the kubectl credential plugin: it prints a client
+// Cert implements the kubectl credential plugin: it prints a client
 // certificate, renewing it first when the stored one is past its half life.
-func issueCert(p *params, pth *paths) error {
+func Cert(p *Params) error {
+	pth, err := p.paths()
+	if err != nil {
+		return err
+	}
 	renew, err := needsRenewal(pth.userCrt)
 	if err != nil {
 		return err
 	}
 	if renew {
 		slog.Debug("Renewing client certificate")
-		if err := renewCert(p, pth); err != nil {
+		if err := renewCertificate(p, pth); err != nil {
 			return err
 		}
 	}
@@ -43,7 +50,9 @@ func issueCert(p *params, pth *paths) error {
 	if err != nil {
 		return fmt.Errorf("Unable to read %s: %w", pth.userKey, err)
 	}
-	credential := &clientauth.ExecCredential{
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(&clientauth.ExecCredential{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "client.authentication.k8s.io/v1beta1",
 			Kind:       "ExecCredential",
@@ -52,13 +61,7 @@ func issueCert(p *params, pth *paths) error {
 			ClientCertificateData: string(cert),
 			ClientKeyData:         string(key),
 		},
-	}
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(credential); err != nil {
-		return fmt.Errorf("Unable to write the credential: %w", err)
-	}
-	return nil
+	})
 }
 
 // needsRenewal reports whether a new certificate should be requested. A
@@ -90,10 +93,10 @@ func pastHalfLife(cert *x509.Certificate, now time.Time) bool {
 	return now.After(cert.NotAfter.Add(-lifetime / 2))
 }
 
-func renewCert(p *params, pth *paths) error {
-	root, err := os.ReadFile(pth.clientCACrt)
+func renewCertificate(p *Params, pth *paths) error {
+	client, err := ca.NewClient(p.CAURL, ca.WithRootFile(pth.clientCACrt))
 	if err != nil {
-		return fmt.Errorf("Unable to read %s, has `k8sss setup` been run for this cluster?: %w", pth.clientCACrt, err)
+		return fmt.Errorf("Unable to reach the CA at %s, has `k8sss setup` been run for this cluster?: %w", p.CAURL, err)
 	}
 	key, err := openSigningKey(p.KeyURI)
 	if err != nil {
@@ -110,15 +113,19 @@ func renewCert(p *params, pth *paths) error {
 		return fmt.Errorf("Unable to create a certificate request: %w", err)
 	}
 
-	var chain []byte
+	var resp *api.SignResponse
 	for remaining := renewAttempts - 1; ; remaining-- {
 		// The CA remembers every token it has seen, so each attempt needs a
 		// freshly minted one.
-		token, err := key.token(p.CAURL, p.Username)
+		ott, err := key.token(p.CAURL, p.Username)
 		if err != nil {
 			return err
 		}
-		if chain, err = signCertificate(p.CAURL, root, csr, token); err == nil {
+		resp, err = client.Sign(&api.SignRequest{
+			CsrPEM: api.CertificateRequest{CertificateRequest: csr},
+			OTT:    ott,
+		})
+		if err == nil {
 			break
 		}
 		if remaining <= 0 {
@@ -128,6 +135,10 @@ func renewCert(p *params, pth *paths) error {
 		time.Sleep(renewBackoff)
 	}
 
+	chain, err := certChain(resp)
+	if err != nil {
+		return err
+	}
 	der, err := x509.MarshalPKCS8PrivateKey(private)
 	if err != nil {
 		return fmt.Errorf("Unable to encode the client key: %w", err)
@@ -139,8 +150,32 @@ func renewCert(p *params, pth *paths) error {
 		return fmt.Errorf("Unable to write %s: %w", pth.userKey, err)
 	}
 	// Written last: a certificate on disk is taken to mean its key is there too.
-	if err := os.WriteFile(pth.userCrt, chain, 0o644); err != nil {
+	if err := os.WriteFile(pth.userCrt, chain, 0o600); err != nil {
 		return fmt.Errorf("Unable to write %s: %w", pth.userCrt, err)
 	}
 	return nil
+}
+
+// certChain serialises the issued chain the same way `step ca certificate`
+// writes it, so the file holds what step would have put there.
+func certChain(resp *api.SignResponse) ([]byte, error) {
+	chain := resp.CertChainPEM
+	if len(chain) == 0 {
+		chain = []api.Certificate{resp.ServerPEM, resp.CaPEM}
+	}
+	var out []byte
+	for _, cert := range chain {
+		if cert.Certificate == nil {
+			continue
+		}
+		block, err := pemutil.Serialize(cert.Certificate)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to serialize the issued certificate: %w", err)
+		}
+		out = append(out, pem.EncodeToMemory(block)...)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("The CA returned an empty certificate chain")
+	}
+	return out, nil
 }

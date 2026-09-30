@@ -76,14 +76,14 @@ Run `k8sss setup <kube-api>:6443` and you're done.
 
 ```
 $ k8sss setup nas:6443
-k8sss: No trust has been established with this Kubernetes cluster yet.
+2026/01/01 12:00:00 WARN No trust has been established with this Kubernetes cluster yet.
 The root certificate fingerprint is f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2
 Do you want to establish that trust now? [y/N]y
-k8sss: Downloading Kubernetes API Client CA certificate
-k8sss: Setting up ~/.kube/config.yaml
-k8sss: Cluster "nas" set
-k8sss: User "system:admin@nas" set
-k8sss: Context "nas" set
+2026/01/01 12:00:00 INFO Downloading Kubernetes API Client CA certificate
+2026/01/01 12:00:00 INFO Setting up ~/.kube/config.yaml
+2026/01/01 12:00:00 INFO Cluster "nas" set
+2026/01/01 12:00:00 INFO User "system:admin@nas" set
+2026/01/01 12:00:00 INFO Context "nas" set
 
 $ kubectl --context nas -n kube-system get pod
 NAME                       READY   STATUS    RESTARTS   AGE
@@ -93,6 +93,9 @@ coredns-77dbf85789-g7qkm   2/2     Running   0          2d15h
 Run `k8sss --help` for details on how to adjust things like the smallstep CA
 endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username
 (`system:admin`), or what key to use for authentication.
+
+Set `LOGLEVEL` to `DEBUG`, `INFO`, `WARN` or `ERROR` to change how much is
+logged.
 
 ## Nix
 
