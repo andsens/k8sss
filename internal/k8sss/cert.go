@@ -1,6 +1,7 @@
 package k8sss
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -27,8 +28,8 @@ const (
 
 // Cert implements the kubectl credential plugin: it prints a client
 // certificate, renewing it first when the stored one is past its half life.
-func Cert(p *Params) error {
-	pth, err := p.paths()
+func Cert(ctx context.Context, c *Config) error {
+	pth, err := c.paths()
 	if err != nil {
 		return err
 	}
@@ -38,7 +39,7 @@ func Cert(p *Params) error {
 	}
 	if renew {
 		slog.Debug("Renewing client certificate")
-		if err := renewCertificate(p, pth); err != nil {
+		if err := renewCertificate(ctx, c, pth); err != nil {
 			return err
 		}
 	}
@@ -93,12 +94,12 @@ func pastHalfLife(cert *x509.Certificate, now time.Time) bool {
 	return now.After(cert.NotAfter.Add(-lifetime / 2))
 }
 
-func renewCertificate(p *Params, pth *paths) error {
-	client, err := ca.NewClient(p.CAURL, ca.WithRootFile(pth.clientCACrt))
+func renewCertificate(ctx context.Context, c *Config, pth *paths) error {
+	client, err := ca.NewClient(c.CAURL, ca.WithRootFile(pth.clientCACrt))
 	if err != nil {
-		return fmt.Errorf("Unable to reach the CA at %s, has `k8sss setup` been run for this cluster?: %w", p.CAURL, err)
+		return fmt.Errorf("Unable to reach the CA at %s, has `k8sss setup` been run for this cluster?: %w", c.CAURL, err)
 	}
-	key, err := openSigningKey(p.KeyURI)
+	key, err := openSigningKey(c.KeyURI)
 	if err != nil {
 		return err
 	}
@@ -108,7 +109,7 @@ func renewCertificate(p *Params, pth *paths) error {
 	if err != nil {
 		return fmt.Errorf("Unable to generate a client key: %w", err)
 	}
-	csr, err := x509util.CreateCertificateRequest(p.Username, []string{p.Username}, private)
+	csr, err := x509util.CreateCertificateRequest(c.Username, []string{c.Username}, private)
 	if err != nil {
 		return fmt.Errorf("Unable to create a certificate request: %w", err)
 	}
@@ -117,11 +118,11 @@ func renewCertificate(p *Params, pth *paths) error {
 	for remaining := renewAttempts - 1; ; remaining-- {
 		// The CA remembers every token it has seen, so each attempt needs a
 		// freshly minted one.
-		ott, err := key.token(p.CAURL, p.Username)
+		ott, err := key.token(c.CAURL, c.Username)
 		if err != nil {
 			return err
 		}
-		resp, err = client.Sign(&api.SignRequest{
+		resp, err = client.SignWithContext(ctx, &api.SignRequest{
 			CsrPEM: api.CertificateRequest{CertificateRequest: csr},
 			OTT:    ott,
 		})

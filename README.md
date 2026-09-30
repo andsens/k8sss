@@ -94,8 +94,8 @@ Run `k8sss --help` for details on how to adjust things like the smallstep CA
 endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username
 (`system:admin`), or what key to use for authentication.
 
-Set `LOGLEVEL` to `DEBUG`, `INFO`, `WARN` or `ERROR` to change how much is
-logged.
+Set `LOGLEVEL` to `debug`, `verbose`, `info`, `warning` or `error` to change
+how much is logged.
 
 ## Nix
 

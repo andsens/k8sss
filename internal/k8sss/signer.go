@@ -8,12 +8,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/hex"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/smallstep/cli/token"
-	"github.com/smallstep/cli/token/provision"
+	"github.com/smallstep/cli/utils/cautils"
 	"go.step.sm/crypto/jose"
 	"go.step.sm/crypto/kms"
 	"go.step.sm/crypto/kms/apiv1"
@@ -79,32 +79,26 @@ func openSigningKey(keyURI string) (_ *signingKey, err error) {
 
 func (k *signingKey) Close() error { return k.manager.Close() }
 
-// token mints the one-time token that authorises a single signing request.
+// token mints the one-time token that authorises a single signing request,
+// using the generator behind `step ca token`. It fills in the claims the JWK
+// provisioner expects and gives every token its own jti, which is what lets
+// the CA reject a replay.
 func (k *signingKey) token(caURL, username string) (string, error) {
-	// The JWK provisioner is named after the thumbprint of its key, so the
-	// issuer has to be that same thumbprint for the CA to find it.
+	// The JWK provisioner is named after the thumbprint of its key, so both
+	// the kid header and the issuer have to carry it.
 	kid, err := token.GenerateKeyID(k.OpaqueSigner)
 	if err != nil {
 		return "", fmt.Errorf("Unable to compute the key ID: %w", err)
 	}
-	jti := make([]byte, 32)
-	if _, err := rand.Read(jti); err != nil {
-		return "", fmt.Errorf("Unable to generate a token ID: %w", err)
-	}
-	ott, err := provision.New(username,
-		token.WithIssuer(kid),
-		token.WithAudience(caURL+"/1.0/sign"),
-		token.WithSANS([]string{username}),
-		token.WithJWTID(hex.EncodeToString(jti)),
-	)
-	if err != nil {
-		return "", fmt.Errorf("Unable to build the token: %w", err)
-	}
-	signed, err := ott.SignedString(string(k.alg), k.OpaqueSigner)
+	generator := cautils.NewTokenGenerator(kid, kid, caURL+"/1.0/sign", "",
+		time.Time{}, time.Time{},
+		&jose.JSONWebKey{Key: k.OpaqueSigner, Algorithm: string(k.alg)})
+	// An empty SAN list means the subject is the only SAN.
+	ott, err := generator.SignToken(username, nil)
 	if err != nil {
 		return "", fmt.Errorf("Unable to sign the token: %w", err)
 	}
-	return signed, nil
+	return ott, nil
 }
 
 // algorithmFor picks the JWS algorithm for a key the same way

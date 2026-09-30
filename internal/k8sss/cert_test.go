@@ -1,6 +1,7 @@
 package k8sss
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -220,14 +221,13 @@ func TestCertAgainstAStandInCA(t *testing.T) {
 
 			ca := newTestCA(t)
 			stand := startCA(t, ca, key.Public())
-			p := &Params{
-				Cert:            true,
+			c := &Config{
 				CAURL:           stand.url,
 				KeyURI:          "sshagentkms:" + comment,
 				Username:        "system:admin",
 				KubeAPIHostname: "nas",
 			}
-			pth, err := p.paths()
+			pth, err := c.paths()
 			if err != nil {
 				t.Fatalf("paths: %v", err)
 			}
@@ -239,7 +239,7 @@ func TestCertAgainstAStandInCA(t *testing.T) {
 			}
 
 			out := captureStdout(t, func() {
-				if err := Cert(p); err != nil {
+				if err := Cert(context.Background(), c); err != nil {
 					t.Fatalf("Cert: %v", err)
 				}
 			})
@@ -283,7 +283,7 @@ func TestCertAgainstAStandInCA(t *testing.T) {
 				t.Fatalf("reading certificate: %v", err)
 			}
 			captureStdout(t, func() {
-				if err := Cert(p); err != nil {
+				if err := Cert(context.Background(), c); err != nil {
 					t.Fatalf("second Cert: %v", err)
 				}
 			})
