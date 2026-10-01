@@ -67,6 +67,13 @@ jobs:
           grep -qF "\"$image\"" nix/modules/default/default.nix
         fi
 
+        # The module and the deployment manifest name the same step-ca, but
+        # only the manifest sits where Dependabot can see it, so the module
+        # follows whatever the manifest says.
+        stepca=$(grep -o 'smallstep/step-ca:[^[:space:]]*' deploy/base/deployment.yaml | head -1)
+        sed -i "s|smallstep/step-ca:[^\"]*|$stepca|" nix/modules/default/default.nix
+        grep -qF "\"$stepca\"" nix/modules/default/default.nix
+
         git diff --quiet && { echo "the pins are already current"; exit 0; }
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

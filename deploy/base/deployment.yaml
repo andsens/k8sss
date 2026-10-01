@@ -36,7 +36,7 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: setup-k8sss-config
-        image: ghcr.io/andsens/k8sss-bootstrap
+        image: ghcr.io/andsens/k8sss-bootstrap:0.3.0
         command: [bash]
         args: [-c, /home/step/setup.sh]
         securityContext:
@@ -69,7 +69,7 @@ spec:
           mountPath: /home/step/config
       containers:
       - name: step-ca
-        image: cr.step.sm/smallstep/step-ca
+        image: smallstep/step-ca:0.30.2
         command: [/usr/local/bin/step-ca]
         args: [/home/step/ca.json]
         securityContext:

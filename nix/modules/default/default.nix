@@ -191,7 +191,10 @@ in
                   };
                 };
                 containersByName.step-ca = {
-                  image = "cr.step.sm/smallstep/step-ca";
+                  # Kept in step with deploy/base/deployment.yaml by
+                  # .github/workflows/pins.yaml, which is where
+                  # Dependabot can see it.
+                  image = "smallstep/step-ca:0.30.2";
                   command = [ "/usr/local/bin/step-ca" ];
                   args = [ "/home/step/config/ca.json" ];
                   securityContext = {
