@@ -8,8 +8,8 @@ import (
 	"github.com/andsens/k8sss/internal/k8sss"
 )
 
-func setupParams(url string) *Params {
-	return &Params{
+func setupParams(url string) *k8sss.Params {
+	return &k8sss.Params{
 		Setup:      true,
 		KubeAPIURL: url,
 		CAURL:      caURLPlaceholder,
@@ -33,32 +33,32 @@ func TestResolveDerivesTheHostnameFromTheURL(t *testing.T) {
 		{"https://k8s.example.com:6443", "k8s.example.com", "https://k8s.example.com:6443"},
 	} {
 		t.Run(tc.arg, func(t *testing.T) {
-			config, err := setupParams(tc.arg).resolve()
-			if err != nil {
+			params := setupParams(tc.arg)
+			if err := resolve(params); err != nil {
 				t.Fatalf("resolve: %v", err)
 			}
-			if config.KubeAPIHostname != tc.hostname {
-				t.Errorf("hostname: got %q, want %q", config.KubeAPIHostname, tc.hostname)
+			if params.KubeAPIHostname != tc.hostname {
+				t.Errorf("hostname: got %q, want %q", params.KubeAPIHostname, tc.hostname)
 			}
-			if config.KubeAPIURL != tc.url {
-				t.Errorf("url: got %q, want %q", config.KubeAPIURL, tc.url)
+			if params.KubeAPIURL != tc.url {
+				t.Errorf("url: got %q, want %q", params.KubeAPIURL, tc.url)
 			}
 		})
 	}
 }
 
 func TestResolveExpandsThePlaceholderDefaults(t *testing.T) {
-	config, err := setupParams("nas:6443").resolve()
-	if err != nil {
+	params := setupParams("nas:6443")
+	if err := resolve(params); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if want := "https://nas:9000"; config.CAURL != want {
-		t.Errorf("ca-url: got %q, want %q", config.CAURL, want)
+	if want := "https://nas:9000"; params.CAURL != want {
+		t.Errorf("ca-url: got %q, want %q", params.CAURL, want)
 	}
-	if config.Context != "nas" || config.Cluster != "nas" {
-		t.Errorf("context/cluster: got %q/%q, want nas/nas", config.Context, config.Cluster)
+	if params.Context != "nas" || params.Cluster != "nas" {
+		t.Errorf("context/cluster: got %q/%q, want nas/nas", params.Context, params.Cluster)
 	}
-	if config.KeyURI == keyURIPlaceholder {
+	if params.KeyURI == keyURIPlaceholder {
 		t.Error("keyuri was left unexpanded")
 	}
 }
@@ -69,18 +69,17 @@ func TestResolveKeepsExplicitValues(t *testing.T) {
 	params.Context = "work"
 	params.Cluster = "prod"
 	params.KeyURI = "yubikey:slot-id=9a"
-	config, err := params.resolve()
-	if err != nil {
+	if err := resolve(params); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if config.CAURL != "https://ca.example.com:9000" || config.Context != "work" ||
-		config.Cluster != "prod" || config.KeyURI != "yubikey:slot-id=9a" {
-		t.Errorf("resolve overwrote an explicit value: %+v", config)
+	if params.CAURL != "https://ca.example.com:9000" || params.Context != "work" ||
+		params.Cluster != "prod" || params.KeyURI != "yubikey:slot-id=9a" {
+		t.Errorf("resolve overwrote an explicit value: %+v", params)
 	}
 }
 
 func TestResolveRejectsAnUnparseableURL(t *testing.T) {
-	if _, err := setupParams("://").resolve(); err == nil {
+	if err := resolve(setupParams("://")); err == nil {
 		t.Error("expected an error for an unparseable KUBEAPI_URL")
 	}
 }
@@ -89,19 +88,19 @@ func TestResolveRejectsAnUnparseableURL(t *testing.T) {
 // values. Asserting the argument shape where it is built and where it is
 // parsed would not catch the two drifting together.
 func TestExecArgsParseBackToTheSameConfig(t *testing.T) {
-	config := &k8sss.Config{
+	params := &k8sss.Params{
 		KubeAPIHostname: "nas",
 		CAURL:           "https://nas:9000",
 		KeyURI:          "sshagentkms:tester@workstation",
 		Username:        "system:admin",
 	}
-	parsed, err := parseArgv(k8sss.ExecArgs(config))
+	parsed, err := parseArgv(k8sss.ExecArgs(params))
 	if err != nil {
 		t.Fatalf("k8sss cannot parse the arguments it writes: %v", err)
 	}
-	if parsed.KeyURI != config.KeyURI || parsed.Username != config.Username ||
-		parsed.CAURL != config.CAURL || parsed.KubeAPIHostname != config.KubeAPIHostname {
-		t.Errorf("round trip lost something:\n got %+v\nwant %+v", parsed, config)
+	if parsed.KeyURI != params.KeyURI || parsed.Username != params.Username ||
+		parsed.CAURL != params.CAURL || parsed.KubeAPIHostname != params.KubeAPIHostname {
+		t.Errorf("round trip lost something:\n got %+v\nwant %+v", parsed, params)
 	}
 }
 
@@ -115,7 +114,7 @@ func TestUsageParsesTheExecPluginArgv(t *testing.T) {
 		"-chttps://nas:9000",
 		"nas",
 	}
-	params := Params{}
+	params := k8sss.Params{}
 	opts, err := docopt.ParseArgs(usage, argv, "")
 	if err != nil {
 		t.Fatalf("parsing %q: %v", argv, err)
@@ -135,14 +134,14 @@ func TestUsageParsesTheExecPluginArgv(t *testing.T) {
 }
 
 // parseArgv runs an argument list through the same parse and resolve main does.
-func parseArgv(argv []string) (*k8sss.Config, error) {
+func parseArgv(argv []string) (*k8sss.Params, error) {
 	opts, err := docopt.ParseArgs(usage, argv, "")
 	if err != nil {
 		return nil, err
 	}
-	params := Params{}
+	params := k8sss.Params{}
 	if err := opts.Bind(&params); err != nil {
 		return nil, err
 	}
-	return params.resolve()
+	return &params, resolve(&params)
 }
