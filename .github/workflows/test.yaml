@@ -46,3 +46,17 @@ jobs:
       uses: ludeeus/action-shellcheck@master
       env:
         SHELLCHECK_OPTS: -x
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: experimental-features = nix-command flakes
+    # Building the flake package is also the only check that the vendorHash it
+    # pins still matches go.mod and go.sum.
+    - name: Build the package
+      run: nix build --print-build-logs .#k8sss
