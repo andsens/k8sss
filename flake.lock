@@ -33,11 +33,11 @@
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1786905731,
-        "narHash": "sha256-7xQkp4dZ+W6vy5dxA+Dz2OPTuuzdqmsGvPg+UToC8vw=",
+        "lastModified": 1788092192,
+        "narHash": "sha256-6pfdPW6GpTquhKet1RoOTTvZh7KY+4BQtvYwKy9uvjo=",
         "owner": "andsens",
         "repo": "nix-docs",
-        "rev": "ec87fef109b4bcba49ed1aae272a325605744f65",
+        "rev": "30dd8a871ed6937db200f7f5191dfbf960958221",
         "type": "github"
       },
       "original": {
@@ -109,11 +109,11 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1786905814,
-        "narHash": "sha256-77KehRa1y+o5t44BjnxMR6IFb3ryc3og0OYj4NzTZJo=",
+        "lastModified": 1790515980,
+        "narHash": "sha256-v6J7xOA0ks6EVdZOb3i4cpZyGPYLW71Ik/MJpEgKFyc=",
         "owner": "andsens",
         "repo": "nix-kubetree",
-        "rev": "61a12b3889116dfad4420c349244a1e5ca18b099",
+        "rev": "e6ef8d6b3f4c0f4be60971a17e4610c1f556d219",
         "type": "github"
       },
       "original": {
