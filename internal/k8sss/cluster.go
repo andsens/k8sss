@@ -29,14 +29,14 @@ import (
 const dialTimeout = 30 * time.Second
 
 // Setup establishes trust with a cluster and adds it to the kubeconfig.
-func Setup(ctx context.Context, p *Params) error {
-	pth, err := p.paths()
+func Setup(ctx context.Context, c *Config) error {
+	pth, err := c.paths()
 	if err != nil {
 		return err
 	}
-	serverCA, err := fetchServerCA(ctx, p.KubeAPIURL)
+	serverCA, err := fetchServerCA(ctx, c.KubeAPIURL)
 	if err != nil {
-		return fmt.Errorf("Unable to retrieve kube-api server certificate from %s: %w", p.KubeAPIURL, err)
+		return fmt.Errorf("Unable to retrieve kube-api server certificate from %s: %w", c.KubeAPIURL, err)
 	}
 	if err := confirmServerCA(pth, serverCA); err != nil {
 		return err
@@ -51,7 +51,7 @@ func Setup(ctx context.Context, p *Params) error {
 	}
 
 	slog.Info("Downloading Kubernetes API Client CA certificate")
-	clientCA, err := fetchCARoots(ctx, p.CAURL)
+	clientCA, err := fetchCARoots(ctx, c.CAURL)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func Setup(ctx context.Context, p *Params) error {
 	}
 
 	slog.Info("Setting up " + abbreviateHome(pth.kubeconfig))
-	if err := writeKubeconfig(p, pth, serverCAPEM); err != nil {
+	if err := writeKubeconfig(c, pth, serverCAPEM); err != nil {
 		return err
 	}
 	// Any certificate left from a previous setup was issued by a CA we have
@@ -171,8 +171,8 @@ func fetchCARoots(ctx context.Context, caURL string) ([]byte, error) {
 
 // List names every cluster that has been set up, which is one directory per
 // Kubernetes API server hostname.
-func List(p *Params) error {
-	pth, err := p.paths()
+func List(c *Config) error {
+	pth, err := c.paths()
 	if err != nil {
 		return err
 	}
@@ -193,11 +193,11 @@ func List(p *Params) error {
 
 // Remove drops the stored certificates along with the context and the cluster
 // and user it refers to.
-func Remove(p *Params) error {
-	if p.KubeAPIHostname == "" {
+func Remove(c *Config) error {
+	if c.KubeAPIHostname == "" {
 		return fmt.Errorf("KUBEAPI_HOSTNAME must not be empty")
 	}
-	pth, err := p.paths()
+	pth, err := c.paths()
 	if err != nil {
 		return err
 	}
@@ -208,16 +208,16 @@ func Remove(p *Params) error {
 	if err != nil {
 		return err
 	}
-	context, ok := config.Contexts[p.Context]
+	context, ok := config.Contexts[c.Context]
 	if !ok {
 		slog.Warn(fmt.Sprintf("Unable to find the context '%s' in your kubeconfig. "+
-			"You will have to remove the user, cluster, and context manually", p.Context))
+			"You will have to remove the user, cluster, and context manually", c.Context))
 		return nil
 	}
 	delete(config.Clusters, context.Cluster)
 	delete(config.AuthInfos, context.AuthInfo)
-	delete(config.Contexts, p.Context)
-	if config.CurrentContext == p.Context {
+	delete(config.Contexts, c.Context)
+	if config.CurrentContext == c.Context {
 		config.CurrentContext = ""
 	}
 	if err := clientcmd.WriteToFile(*config, pth.kubeconfig); err != nil {
@@ -228,7 +228,7 @@ func Remove(p *Params) error {
 
 // writeKubeconfig adds (or updates) the cluster, user and context for this
 // Kubernetes API server, leaving every other entry in the file alone.
-func writeKubeconfig(p *Params, pth *paths, serverCA []byte) error {
+func writeKubeconfig(c *Config, pth *paths, serverCA []byte) error {
 	config, err := loadKubeconfig(pth.kubeconfig)
 	if err != nil {
 		return err
@@ -241,17 +241,17 @@ func writeKubeconfig(p *Params, pth *paths, serverCA []byte) error {
 		executable = resolved
 	}
 
-	cluster, ok := config.Clusters[p.Cluster]
+	cluster, ok := config.Clusters[c.Cluster]
 	if !ok {
 		cluster = api.NewCluster()
 	}
-	cluster.Server = p.KubeAPIURL
+	cluster.Server = c.KubeAPIURL
 	cluster.CertificateAuthorityData = serverCA
 	cluster.CertificateAuthority = ""
-	config.Clusters[p.Cluster] = cluster
-	slog.Info(fmt.Sprintf("Cluster %q set", p.Cluster))
+	config.Clusters[c.Cluster] = cluster
+	slog.Info(fmt.Sprintf("Cluster %q set", c.Cluster))
 
-	userName := p.Username + "@" + p.Cluster
+	userName := c.Username + "@" + c.Cluster
 	authInfo, ok := config.AuthInfos[userName]
 	if !ok {
 		authInfo = api.NewAuthInfo()
@@ -259,19 +259,19 @@ func writeKubeconfig(p *Params, pth *paths, serverCA []byte) error {
 	authInfo.Exec = &api.ExecConfig{
 		APIVersion: "client.authentication.k8s.io/v1beta1",
 		Command:    executable,
-		Args:       ExecArgs(p),
+		Args:       ExecArgs(c),
 	}
 	config.AuthInfos[userName] = authInfo
 	slog.Info(fmt.Sprintf("User %q set", userName))
 
-	context, ok := config.Contexts[p.Context]
+	context, ok := config.Contexts[c.Context]
 	if !ok {
 		context = api.NewContext()
 	}
-	context.Cluster = p.Cluster
+	context.Cluster = c.Cluster
 	context.AuthInfo = userName
-	config.Contexts[p.Context] = context
-	slog.Info(fmt.Sprintf("Context %q set", p.Context))
+	config.Contexts[c.Context] = context
+	slog.Info(fmt.Sprintf("Context %q set", c.Context))
 
 	// WriteToFile creates the directory and writes with 0600 itself.
 	if err := clientcmd.WriteToFile(*config, pth.kubeconfig); err != nil {
