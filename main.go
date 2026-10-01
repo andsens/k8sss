@@ -10,19 +10,11 @@ import (
 	"os"
 	"os/user"
 	"regexp"
-	"strings"
 
 	"github.com/docopt/docopt-go"
 
 	"github.com/andsens/k8sss/internal/k8sss"
 )
-
-type Params struct {
-	Setup bool `docopt:"setup"`
-	Rm    bool `docopt:"rm"`
-	Ls    bool `docopt:"ls"`
-	Cert  bool `docopt:"cert"`
-}
 
 const usage = `k8sss - Issue Kubernetes client certificates via Smallstep
 Usage:
@@ -67,59 +59,34 @@ func main() {
 		os.Stderr.WriteString(err.Error())
 		os.Exit(1)
 	}
-	commands, options := split(parser)
-	params := Params{}
-	err = commands.Bind(&params)
+	params := k8sss.Params{}
+	err = parser.Bind(&params)
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
 		os.Exit(1)
 	}
-	config := k8sss.Config{}
-	err = options.Bind(&config)
-	if err != nil {
-		os.Stderr.WriteString(err.Error())
-		os.Exit(1)
-	}
-	err = resolve(&config, params.Setup)
+	err = resolve(&params)
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 	ctx := context.Background()
 	if params.Setup {
-		err = k8sss.Setup(ctx, &config)
+		err = k8sss.Setup(ctx, &params)
 	}
 	if params.Rm {
-		err = k8sss.Remove(&config)
+		err = k8sss.Remove(&params)
 	}
 	if params.Ls {
-		err = k8sss.List(&config)
+		err = k8sss.List(&params)
 	}
 	if params.Cert {
-		err = k8sss.Cert(ctx, &config)
+		err = k8sss.Cert(ctx, &params)
 	}
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
-}
-
-// split sorts the parsed keys into the two structs that want them. docopt
-// binds a struct that accounts for every key it was given, and skips embedded
-// fields, so one struct cannot cover the subcommands alone and embedding does
-// not help. docopt's own naming tells the keys apart: options start with a
-// dash and arguments are upper case, while subcommands are plain lower-case
-// words. A key that lands in the wrong one fails loudly at Bind.
-func split(opts docopt.Opts) (commands, options docopt.Opts) {
-	commands, options = docopt.Opts{}, docopt.Opts{}
-	for key, value := range opts {
-		if strings.HasPrefix(key, "-") || key == strings.ToUpper(key) {
-			options[key] = value
-		} else {
-			commands[key] = value
-		}
-	}
-	return commands, options
 }
 
 // kubeAPIURL splits the KUBEAPI_URL argument into a hostname and a normalised
@@ -128,20 +95,20 @@ var kubeAPIURL = regexp.MustCompile(`^(https?://)?([^:/]+)(:[^:/]+)?`)
 
 // resolve expands the placeholder defaults and, for setup, derives the
 // hostname from the URL that was passed.
-func resolve(config *k8sss.Config, setup bool) error {
-	if setup {
-		match := kubeAPIURL.FindStringSubmatch(config.KubeAPIURL)
+func resolve(params *k8sss.Params) error {
+	if params.Setup {
+		match := kubeAPIURL.FindStringSubmatch(params.KubeAPIURL)
 		if match == nil {
-			return fmt.Errorf("Unable to parse KUBEAPI_URL '%s'", config.KubeAPIURL)
+			return fmt.Errorf("Unable to parse KUBEAPI_URL '%s'", params.KubeAPIURL)
 		}
 		scheme, host, port := match[1], match[2], match[3]
 		if scheme == "" {
 			scheme = "https://"
 		}
-		config.KubeAPIHostname = host
-		config.KubeAPIURL = scheme + host + port
+		params.KubeAPIHostname = host
+		params.KubeAPIURL = scheme + host + port
 	}
-	if config.KeyURI == keyURIPlaceholder {
+	if params.KeyURI == keyURIPlaceholder {
 		usr, err := user.Current()
 		if err != nil {
 			return fmt.Errorf("Unable to determine the current user: %w", err)
@@ -150,16 +117,16 @@ func resolve(config *k8sss.Config, setup bool) error {
 		if err != nil {
 			return fmt.Errorf("Unable to determine the hostname: %w", err)
 		}
-		config.KeyURI = "sshagentkms:" + usr.Username + "@" + host
+		params.KeyURI = "sshagentkms:" + usr.Username + "@" + host
 	}
-	if config.Context == hostnamePlaceholder {
-		config.Context = config.KubeAPIHostname
+	if params.Context == hostnamePlaceholder {
+		params.Context = params.KubeAPIHostname
 	}
-	if config.Cluster == hostnamePlaceholder {
-		config.Cluster = config.KubeAPIHostname
+	if params.Cluster == hostnamePlaceholder {
+		params.Cluster = params.KubeAPIHostname
 	}
-	if config.CAURL == caURLPlaceholder {
-		config.CAURL = "https://" + config.KubeAPIHostname + ":9000"
+	if params.CAURL == caURLPlaceholder {
+		params.CAURL = "https://" + params.KubeAPIHostname + ":9000"
 	}
 	return nil
 }

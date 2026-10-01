@@ -10,8 +10,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api"
 )
 
-func testConfig() *Config {
-	return &Config{
+func testParams() *Params {
+	return &Params{
 		KubeAPIURL:      "https://nas:6443",
 		KubeAPIHostname: "nas",
 		CAURL:           "https://nas:9000",
@@ -33,12 +33,12 @@ func testHome(t *testing.T) string {
 
 func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	testHome(t)
-	c := testConfig()
-	pth, err := c.paths()
+	p := testParams()
+	pth, err := p.paths()
 	if err != nil {
 		t.Fatalf("paths: %v", err)
 	}
-	if err := writeKubeconfig(c, pth, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")); err != nil {
+	if err := writeKubeconfig(p, pth, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
@@ -66,8 +66,8 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	}
 	// The plugin invocation has to come from the shared builder, which is what
 	// main's tests parse back to close the loop across the package boundary.
-	if !slices.Equal(authInfo.Exec.Args, ExecArgs(c)) {
-		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, ExecArgs(c))
+	if !slices.Equal(authInfo.Exec.Args, ExecArgs(p)) {
+		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, ExecArgs(p))
 	}
 	want := []string{"cert", "-ksshagentkms:tester@workstation", "-usystem:admin", "-chttps://nas:9000", "nas"}
 	if !slices.Equal(authInfo.Exec.Args, want) {
@@ -87,8 +87,8 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 // `kubectl config set-cluster` would not.
 func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 	testHome(t)
-	c := testConfig()
-	pth, err := c.paths()
+	p := testParams()
+	pth, err := p.paths()
 	if err != nil {
 		t.Fatalf("paths: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 		t.Fatalf("writing kubeconfig: %v", err)
 	}
 
-	if err := writeKubeconfig(c, pth, []byte("ca")); err != nil {
+	if err := writeKubeconfig(p, pth, []byte("ca")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
@@ -122,19 +122,19 @@ func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 
 func TestRemoveDeletesEverythingItAdded(t *testing.T) {
 	testHome(t)
-	c := testConfig()
-	pth, err := c.paths()
+	p := testParams()
+	pth, err := p.paths()
 	if err != nil {
 		t.Fatalf("paths: %v", err)
 	}
 	if err := os.MkdirAll(pth.dir, 0o700); err != nil {
 		t.Fatalf("creating cluster directory: %v", err)
 	}
-	if err := writeKubeconfig(c, pth, []byte("ca")); err != nil {
+	if err := writeKubeconfig(p, pth, []byte("ca")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 
-	if err := Remove(c); err != nil {
+	if err := Remove(p); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	if _, err := os.Stat(pth.dir); !os.IsNotExist(err) {
@@ -153,9 +153,9 @@ func TestRemoveDeletesEverythingItAdded(t *testing.T) {
 // directory.
 func TestRemoveRefusesAnEmptyHostname(t *testing.T) {
 	home := testHome(t)
-	c := testConfig()
-	c.KubeAPIHostname = ""
-	if err := Remove(c); err == nil {
+	p := testParams()
+	p.KubeAPIHostname = ""
+	if err := Remove(p); err == nil {
 		t.Error("expected an error for an empty hostname")
 	}
 	if _, err := os.Stat(home); err != nil {
@@ -165,7 +165,7 @@ func TestRemoveRefusesAnEmptyHostname(t *testing.T) {
 
 func TestListOnAMissingDirectory(t *testing.T) {
 	testHome(t)
-	if err := List(testConfig()); err != nil {
+	if err := List(testParams()); err != nil {
 		t.Errorf("List: %v", err)
 	}
 }
@@ -177,7 +177,7 @@ func TestListNamesTheConfiguredClusters(t *testing.T) {
 			t.Fatalf("creating %s: %v", name, err)
 		}
 	}
-	if err := List(testConfig()); err != nil {
+	if err := List(testParams()); err != nil {
 		t.Errorf("List: %v", err)
 	}
 }
