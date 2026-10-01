@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # auto-release.yaml asks for a run by hand, since a tag it pushes starts
+  # none of its own.
+  workflow_dispatch: {}
 
 jobs:
   test:

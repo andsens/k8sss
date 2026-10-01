@@ -1,0 +1,43 @@
+name: Auto release
+
+# Dependency updates merge on their own all week. A weekly patch release
+# carries them to anyone installing through upkg or the deployment manifests,
+# and republishes the utilities image under the new version.
+on:
+  schedule:
+  - cron: '0 4 * * 1'
+  # So a release can also be cut on demand.
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        # Deep, so the tags are present for git describe below.
+        fetch-depth: 0
+    - name: Tag the next patch version
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        latest=$(git describe --tags --abbrev=0 --match 'v*')
+        if git diff --quiet "$latest" HEAD; then
+          echo "nothing has landed since $latest"
+          exit 0
+        fi
+        next="${latest%.*}.$(( ${latest##*.} + 1 ))"
+        echo "releasing $next, up from $latest:"
+        git log --oneline "$latest"..HEAD
+
+        git tag "$next"
+        git push origin "$next"
+        # A tag pushed with GITHUB_TOKEN starts no workflow runs, so
+        # release.yaml has to be asked for it by hand - workflow_dispatch is
+        # the one trigger exempt from that suppression.
+        gh workflow run release.yaml --ref "$next"
