@@ -12,6 +12,11 @@ permissions:
 jobs:
   vendor-hash:
     runs-on: ubuntu-latest
+    # The push below matches this workflow's own trigger, so without this the
+    # workflow would run a second time under a human actor - finding nothing to
+    # do, but also unable to read the token, which only Dependabot events can
+    # reach.
+    if: github.actor == 'dependabot[bot]'
     steps:
     - name: Checkout the branch
       uses: actions/checkout@v4
