@@ -1,0 +1,56 @@
+name: Vendor hash
+
+# Dependabot cannot know that a Go bump moves the vendor hash flake.nix pins,
+# so it is put right on the branch, before the pull request is merged.
+on:
+  push:
+    branches: ['dependabot/**']
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  vendor-hash:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout the branch
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.ref_name }}
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: experimental-features = nix-command flakes
+    - name: Update the vendor hash
+      id: update
+      run: |
+        go mod vendor
+        want=$(nix hash path --type sha256 --sri vendor)
+        rm -rf vendor
+        have=$(grep -oP '(?<=vendorHash = ")[^"]+' flake.nix)
+        if [ "$want" = "$have" ]; then
+          echo "vendorHash is already $have"
+          exit 0
+        fi
+        echo "vendorHash $have -> $want"
+        sed -i "s|vendorHash = \"$have\"|vendorHash = \"$want\"|" flake.nix
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git commit -m 'Update vendorHash for the bumped dependencies' flake.nix
+        git push
+        echo pushed=true >>"$GITHUB_OUTPUT"
+
+    # The push above was made with GITHUB_TOKEN, and GitHub starts no workflow
+    # runs for those, so the commit it created would carry no checks at all and
+    # auto-merge would wait on them forever. workflow_dispatch is the one
+    # trigger exempt from that, so the checks are asked for by hand.
+    - name: Run the checks on the new commit
+      if: steps.update.outputs.pushed == 'true'
+      run: gh workflow run test.yaml --ref "$GITHUB_REF_NAME"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

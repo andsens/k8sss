@@ -7,6 +7,9 @@ on:
     branches: ['**']
     tags: ['!v*']
   workflow_call: {}
+  # vendor-hash.yaml asks for a run by hand, since the commit it pushes gets
+  # none of its own.
+  workflow_dispatch: {}
 
 jobs:
   go:

@@ -12,49 +12,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  # A Go bump moves the vendor hash that flake.nix pins, and Dependabot cannot
-  # know that, so it is put right here before the checks run on it.
-  vendor-hash:
-    runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
-    steps:
-    - name: Checkout the pull request branch
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.head_ref }}
-        # Pushing with the default GITHUB_TOKEN starts no new workflow runs, so
-        # the checks would never report on the commit made below and auto-merge
-        # would wait on them forever. A token from a secret does start them.
-        # Without one the pull request stalls rather than merging untested.
-        token: ${{ secrets.DEPENDABOT_TOKEN || secrets.GITHUB_TOKEN }}
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: go.mod
-    - name: Install Nix
-      uses: cachix/install-nix-action@v31
-      with:
-        extra_nix_config: experimental-features = nix-command flakes
-    - name: Update the vendor hash
-      run: |
-        go mod vendor
-        want=$(nix hash path --type sha256 --sri vendor)
-        rm -rf vendor
-        have=$(grep -oP '(?<=vendorHash = ")[^"]+' flake.nix)
-        if [ "$want" = "$have" ]; then
-          echo "vendorHash is already $have"
-          exit 0
-        fi
-        echo "vendorHash $have -> $want"
-        sed -i "s|vendorHash = \"$have\"|vendorHash = \"$want\"|" flake.nix
-        git config user.name 'github-actions[bot]'
-        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-        git commit -m 'Update vendorHash for the bumped dependencies' flake.nix
-        git push
-
   auto-merge:
     runs-on: ubuntu-latest
-    needs: vendor-hash
     if: github.actor == 'dependabot[bot]'
     steps:
     - name: Fetch Dependabot metadata
@@ -64,11 +23,11 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
 
     # This only *enables* GitHub's native auto-merge, which then waits for the
-    # required status checks on whatever the head commit ends up being. That
-    # needs "Allow auto-merge" turned on for the repository and the `go`,
-    # `lint` and `nix` jobs from test.yaml set as required checks on main, or
-    # it is a no-op. Major bumps are left alone, being the ones likely to
-    # carry breaking changes.
+    # required status checks on whatever the head commit ends up being - which
+    # may be a commit vendor-hash.yaml added. That needs "Allow auto-merge"
+    # turned on for the repository and the `go`, `lint` and `nix` jobs from
+    # test.yaml set as required checks on main, or it is a no-op. Major bumps
+    # are left alone, being the ones likely to carry breaking changes.
     - name: Enable auto-merge for patch and minor updates
       if: steps.metadata.outputs.update-type != 'version-update:semver-major'
       run: gh pr merge --auto --squash "$PR_URL"
