@@ -4,13 +4,13 @@ go 1.26.0
 
 require (
 	github.com/docopt/docopt-go v0.0.0-20180111231733-ee0de3bc6815
-	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/smallstep/certificates v0.30.2
 	github.com/smallstep/cli v0.31.0
 	go.step.sm/crypto v0.91.0
 	golang.org/x/crypto v0.57.0
-	k8s.io/apimachinery v0.37.0
-	k8s.io/client-go v0.37.0
+	k8s.io/apimachinery v0.37.1
+	k8s.io/client-go v0.37.1
 )
 
 require (
