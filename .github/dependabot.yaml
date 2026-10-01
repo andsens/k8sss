@@ -23,3 +23,10 @@ updates:
   directory: /
   schedule:
     interval: weekly
+# Only bootstrap.Dockerfile's base image is reachable this way. The image tags
+# in deploy/base/kustomization.yaml are written as kustomize's name/newTag
+# pairs, which Dependabot's parser does not recognise as images.
+- package-ecosystem: docker
+  directory: /
+  schedule:
+    interval: weekly
