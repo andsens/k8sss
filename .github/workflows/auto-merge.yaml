@@ -24,7 +24,7 @@ jobs:
 
     # This only *enables* GitHub's native auto-merge, which then waits for the
     # required status checks on whatever the head commit ends up being - which
-    # may be a commit vendor-hash.yaml added. That needs "Allow auto-merge"
+    # may be a commit pins.yaml added. That needs "Allow auto-merge"
     # turned on for the repository and the `go`, `lint` and `nix` jobs from
     # test.yaml set as required checks on main, or it is a no-op. Major bumps
     # are left alone, being the ones likely to carry breaking changes.

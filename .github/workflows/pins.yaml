@@ -1,7 +1,8 @@
-name: Vendor hash
+name: Pins
 
 # Dependabot cannot know that a Go bump moves the vendor hash flake.nix pins,
-# so it is put right on the branch, before the pull request is merged.
+# nor that a base image bump moves the image the module pins, so both are put
+# right on the branch before the pull request is merged.
 on:
   push:
     branches: ['dependabot/**']
@@ -10,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  vendor-hash:
+  pins:
     runs-on: ubuntu-latest
     # The push below matches this workflow's own trigger, so without this the
     # workflow would run a second time under a human actor - finding nothing to
@@ -22,6 +23,8 @@ jobs:
       uses: actions/checkout@v4
       with:
         ref: ${{ github.ref_name }}
+        # Deep, so the branch can be compared against main below.
+        fetch-depth: 0
         # A push made with the default GITHUB_TOKEN starts no workflow runs, so
         # the commit below would carry no checks and auto-merge would wait on
         # them forever. A personal access token does start them.
@@ -38,8 +41,7 @@ jobs:
       uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: experimental-features = nix-command flakes
-    - name: Update the vendor hash
-      id: update
+    - name: Update the pins
       run: |
         go mod vendor
         want=$(nix hash path --type sha256 --sri vendor)
@@ -48,10 +50,26 @@ jobs:
         # Catches the pattern going stale, which would otherwise be
         # indistinguishable from there being nothing to do.
         grep -qF "vendorHash = \"$want\"" flake.nix
-        git diff --quiet flake.nix && { echo "vendorHash is already $want"; exit 0; }
+
+        # Only when this branch changes the Dockerfile does
+        # build-bootstrap.yaml publish an image for this commit, tagged with
+        # its short sha. The tag is known in advance, so the pin can be written
+        # without waiting for that build - and if the build fails the checks
+        # fail and nothing merges. Pinning on any other bump would name a tag
+        # that never gets built.
+        if ! git diff --quiet origin/main -- bootstrap.Dockerfile; then
+          # $GITHUB_SHA, which is what metadata-action derives the tag from
+          # in build-bootstrap.yaml, so both name the same image. Deriving it
+          # any other way can diverge: the head of a push is what gets built,
+          # not necessarily the commit that touched the Dockerfile.
+          image="ghcr.io/andsens/k8sss-bootstrap:sha-${GITHUB_SHA:0:7}"
+          sed -i "s|ghcr.io/andsens/k8sss-bootstrap:[^\"]*|$image|" nix/modules/default/default.nix
+          grep -qF "\"$image\"" nix/modules/default/default.nix
+        fi
+
+        git diff --quiet && { echo "the pins are already current"; exit 0; }
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-        git commit -m 'Update vendorHash for the bumped dependencies' flake.nix
+        git commit -m 'Update the pins for the bumped dependencies' \
+          flake.nix nix/modules/default/default.nix
         git push
-        echo pushed=true >>"$GITHUB_OUTPUT"
-

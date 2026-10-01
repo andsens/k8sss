@@ -153,7 +153,9 @@ in
                 serviceAccountName = "k8sss";
                 securityContext.fsGroup = 1000;
                 initContainersByName.setup-k8sss-config = {
-                  image = "ghcr.io/andsens/k8sss-bootstrap";
+                  # Rewritten by .github/workflows/pins.yaml to the
+                  # sha-tagged image built from the bumping commit.
+                  image = "ghcr.io/andsens/k8sss-bootstrap:0.3.0";
                   command = [ "bash" ];
                   args = [ "/home/step/setup.sh" ];
                   securityContext = {
