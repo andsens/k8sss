@@ -31,17 +31,63 @@ func testHome(t *testing.T) string {
 	return home
 }
 
+// testConfig is the command line of testParams with its paths worked out.
+func testConfig(t *testing.T) *Config {
+	t.Helper()
+	config, err := testParams().Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	return config
+}
+
+// The hostname and the username become path elements, and Remove deletes the
+// directory the hostname names.
+func TestConfigRejectsPathsInNamesUsedAsDirectories(t *testing.T) {
+	testHome(t)
+	for _, tc := range []struct{ hostname, username string }{
+		{"../../etc", "system:admin"},
+		{"..", "system:admin"},
+		{".", "system:admin"},
+		{"a/b", "system:admin"},
+		{"nas", "../../root"},
+		{"nas", "a/b"},
+	} {
+		params := testParams()
+		params.KubeAPIHostname = tc.hostname
+		params.Username = tc.username
+		if _, err := params.Config(); err == nil {
+			t.Errorf("hostname %q username %q was accepted", tc.hostname, tc.username)
+		}
+	}
+}
+
+func TestConfigResolvesThePaths(t *testing.T) {
+	home := testHome(t)
+	config := testConfig(t)
+	dir := filepath.Join(home, ".config", "k8sss", "nas")
+	for _, tc := range []struct{ name, got, want string }{
+		{"configDir", config.configDir, filepath.Join(home, ".config", "k8sss")},
+		{"dir", config.dir, dir},
+		{"serverCACrt", config.serverCACrt, filepath.Join(dir, "server-ca.crt")},
+		{"clientCACrt", config.clientCACrt, filepath.Join(dir, "client-ca.crt")},
+		{"userCrt", config.userCrt, filepath.Join(dir, "system:admin.crt")},
+		{"userKey", config.userKey, filepath.Join(dir, "system:admin.key")},
+		{"kubeconfig", config.kubeconfig, filepath.Join(home, ".kube", "config.yaml")},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
 func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	testHome(t)
-	p := testParams()
-	pth, err := p.paths()
-	if err != nil {
-		t.Fatalf("paths: %v", err)
-	}
-	if err := writeKubeconfig(p, pth, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")); err != nil {
+	c := testConfig(t)
+	if err := writeKubeconfig(c, []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
-	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
+	config, err := clientcmd.LoadFromFile(c.kubeconfig)
 	if err != nil {
 		t.Fatalf("loading kubeconfig: %v", err)
 	}
@@ -66,8 +112,8 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	}
 	// The plugin invocation has to come from the shared builder, which is what
 	// main's tests parse back to close the loop across the package boundary.
-	if !slices.Equal(authInfo.Exec.Args, ExecArgs(p)) {
-		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, ExecArgs(p))
+	if !slices.Equal(authInfo.Exec.Args, ExecArgs(&c.Params)) {
+		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, ExecArgs(&c.Params))
 	}
 	want := []string{"cert", "-ksshagentkms:tester@workstation", "-usystem:admin", "-chttps://nas:9000", "nas"}
 	if !slices.Equal(authInfo.Exec.Args, want) {
@@ -87,25 +133,21 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 // `kubectl config set-cluster` would not.
 func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 	testHome(t)
-	p := testParams()
-	pth, err := p.paths()
-	if err != nil {
-		t.Fatalf("paths: %v", err)
-	}
+	c := testConfig(t)
 	existing := api.NewConfig()
 	existing.Clusters["other"] = &api.Cluster{Server: "https://other:6443"}
 	existing.Contexts["other"] = &api.Context{Cluster: "other", AuthInfo: "someone"}
 	existing.AuthInfos["someone"] = &api.AuthInfo{Token: "secret"}
 	existing.Contexts["nas"] = &api.Context{Cluster: "nas", AuthInfo: "old", Namespace: "kube-system"}
 	existing.CurrentContext = "other"
-	if err := clientcmd.WriteToFile(*existing, pth.kubeconfig); err != nil {
+	if err := clientcmd.WriteToFile(*existing, c.kubeconfig); err != nil {
 		t.Fatalf("writing kubeconfig: %v", err)
 	}
 
-	if err := writeKubeconfig(p, pth, []byte("ca")); err != nil {
+	if err := writeKubeconfig(c, []byte("ca")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
-	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
+	config, err := clientcmd.LoadFromFile(c.kubeconfig)
 	if err != nil {
 		t.Fatalf("loading kubeconfig: %v", err)
 	}
@@ -122,25 +164,21 @@ func TestWriteKubeconfigLeavesOtherEntriesAlone(t *testing.T) {
 
 func TestRemoveDeletesEverythingItAdded(t *testing.T) {
 	testHome(t)
-	p := testParams()
-	pth, err := p.paths()
-	if err != nil {
-		t.Fatalf("paths: %v", err)
-	}
-	if err := os.MkdirAll(pth.dir, 0o700); err != nil {
+	c := testConfig(t)
+	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		t.Fatalf("creating cluster directory: %v", err)
 	}
-	if err := writeKubeconfig(p, pth, []byte("ca")); err != nil {
+	if err := writeKubeconfig(c, []byte("ca")); err != nil {
 		t.Fatalf("writeKubeconfig: %v", err)
 	}
 
-	if err := Remove(p); err != nil {
+	if err := Remove(c); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if _, err := os.Stat(pth.dir); !os.IsNotExist(err) {
+	if _, err := os.Stat(c.dir); !os.IsNotExist(err) {
 		t.Error("the cluster directory was left behind")
 	}
-	config, err := clientcmd.LoadFromFile(pth.kubeconfig)
+	config, err := clientcmd.LoadFromFile(c.kubeconfig)
 	if err != nil {
 		t.Fatalf("loading kubeconfig: %v", err)
 	}
@@ -153,9 +191,13 @@ func TestRemoveDeletesEverythingItAdded(t *testing.T) {
 // directory.
 func TestRemoveRefusesAnEmptyHostname(t *testing.T) {
 	home := testHome(t)
-	p := testParams()
-	p.KubeAPIHostname = ""
-	if err := Remove(p); err == nil {
+	params := testParams()
+	params.KubeAPIHostname = ""
+	c, err := params.Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	if err := Remove(c); err == nil {
 		t.Error("expected an error for an empty hostname")
 	}
 	if _, err := os.Stat(home); err != nil {
@@ -165,7 +207,7 @@ func TestRemoveRefusesAnEmptyHostname(t *testing.T) {
 
 func TestListOnAMissingDirectory(t *testing.T) {
 	testHome(t)
-	if err := List(testParams()); err != nil {
+	if err := List(testConfig(t)); err != nil {
 		t.Errorf("List: %v", err)
 	}
 }
@@ -177,7 +219,7 @@ func TestListNamesTheConfiguredClusters(t *testing.T) {
 			t.Fatalf("creating %s: %v", name, err)
 		}
 	}
-	if err := List(testParams()); err != nil {
+	if err := List(testConfig(t)); err != nil {
 		t.Errorf("List: %v", err)
 	}
 }

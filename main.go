@@ -65,23 +65,23 @@ func main() {
 		os.Stderr.WriteString(err.Error())
 		os.Exit(1)
 	}
-	err = resolve(&params)
+	config, err := resolve(&params)
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 	ctx := context.Background()
 	if params.Setup {
-		err = k8sss.Setup(ctx, &params)
+		err = k8sss.Setup(ctx, config)
 	}
 	if params.Rm {
-		err = k8sss.Remove(&params)
+		err = k8sss.Remove(config)
 	}
 	if params.Ls {
-		err = k8sss.List(&params)
+		err = k8sss.List(config)
 	}
 	if params.Cert {
-		err = k8sss.Cert(ctx, &params)
+		err = k8sss.Cert(ctx, config)
 	}
 	if err != nil {
 		slog.Error(err.Error())
@@ -94,12 +94,13 @@ func main() {
 var kubeAPIURL = regexp.MustCompile(`^(https?://)?([^:/]+)(:[^:/]+)?`)
 
 // resolve expands the placeholder defaults and, for setup, derives the
-// hostname from the URL that was passed.
-func resolve(params *k8sss.Params) error {
+// hostname from the URL that was passed, then hands the result over to be
+// turned into the config a command runs on.
+func resolve(params *k8sss.Params) (*k8sss.Config, error) {
 	if params.Setup {
 		match := kubeAPIURL.FindStringSubmatch(params.KubeAPIURL)
 		if match == nil {
-			return fmt.Errorf("Unable to parse KUBEAPI_URL '%s'", params.KubeAPIURL)
+			return nil, fmt.Errorf("Unable to parse KUBEAPI_URL '%s'", params.KubeAPIURL)
 		}
 		scheme, host, port := match[1], match[2], match[3]
 		if scheme == "" {
@@ -111,11 +112,11 @@ func resolve(params *k8sss.Params) error {
 	if params.KeyURI == keyURIPlaceholder {
 		usr, err := user.Current()
 		if err != nil {
-			return fmt.Errorf("Unable to determine the current user: %w", err)
+			return nil, fmt.Errorf("Unable to determine the current user: %w", err)
 		}
 		host, err := os.Hostname()
 		if err != nil {
-			return fmt.Errorf("Unable to determine the hostname: %w", err)
+			return nil, fmt.Errorf("Unable to determine the hostname: %w", err)
 		}
 		params.KeyURI = "sshagentkms:" + usr.Username + "@" + host
 	}
@@ -128,5 +129,5 @@ func resolve(params *k8sss.Params) error {
 	if params.CAURL == caURLPlaceholder {
 		params.CAURL = "https://" + params.KubeAPIHostname + ":9000"
 	}
-	return nil
+	return params.Config()
 }

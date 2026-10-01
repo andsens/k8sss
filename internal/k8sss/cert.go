@@ -28,28 +28,24 @@ const (
 
 // Cert implements the kubectl credential plugin: it prints a client
 // certificate, renewing it first when the stored one is past its half life.
-func Cert(ctx context.Context, p *Params) error {
-	pth, err := p.paths()
-	if err != nil {
-		return err
-	}
-	renew, err := needsRenewal(pth.userCrt)
+func Cert(ctx context.Context, c *Config) error {
+	renew, err := needsRenewal(c.userCrt)
 	if err != nil {
 		return err
 	}
 	if renew {
 		slog.Debug("Renewing client certificate")
-		if err := renewCertificate(ctx, p, pth); err != nil {
+		if err := renewCertificate(ctx, c); err != nil {
 			return err
 		}
 	}
-	cert, err := os.ReadFile(pth.userCrt)
+	cert, err := os.ReadFile(c.userCrt)
 	if err != nil {
-		return fmt.Errorf("Unable to read %s: %w", pth.userCrt, err)
+		return fmt.Errorf("Unable to read %s: %w", c.userCrt, err)
 	}
-	key, err := os.ReadFile(pth.userKey)
+	key, err := os.ReadFile(c.userKey)
 	if err != nil {
-		return fmt.Errorf("Unable to read %s: %w", pth.userKey, err)
+		return fmt.Errorf("Unable to read %s: %w", c.userKey, err)
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -94,12 +90,12 @@ func pastHalfLife(cert *x509.Certificate, now time.Time) bool {
 	return now.After(cert.NotAfter.Add(-lifetime / 2))
 }
 
-func renewCertificate(ctx context.Context, p *Params, pth *paths) error {
-	client, err := ca.NewClient(p.CAURL, ca.WithRootFile(pth.clientCACrt))
+func renewCertificate(ctx context.Context, c *Config) error {
+	client, err := ca.NewClient(c.CAURL, ca.WithRootFile(c.clientCACrt))
 	if err != nil {
-		return fmt.Errorf("Unable to reach the CA at %s, has `k8sss setup` been run for this cluster?: %w", p.CAURL, err)
+		return fmt.Errorf("Unable to reach the CA at %s, has `k8sss setup` been run for this cluster?: %w", c.CAURL, err)
 	}
-	key, err := openSigningKey(p.KeyURI)
+	key, err := openSigningKey(c.KeyURI)
 	if err != nil {
 		return err
 	}
@@ -109,7 +105,7 @@ func renewCertificate(ctx context.Context, p *Params, pth *paths) error {
 	if err != nil {
 		return fmt.Errorf("Unable to generate a client key: %w", err)
 	}
-	csr, err := x509util.CreateCertificateRequest(p.Username, []string{p.Username}, private)
+	csr, err := x509util.CreateCertificateRequest(c.Username, []string{c.Username}, private)
 	if err != nil {
 		return fmt.Errorf("Unable to create a certificate request: %w", err)
 	}
@@ -118,7 +114,7 @@ func renewCertificate(ctx context.Context, p *Params, pth *paths) error {
 	for remaining := renewAttempts - 1; ; remaining-- {
 		// The CA remembers every token it has seen, so each attempt needs a
 		// freshly minted one.
-		ott, err := key.token(p.CAURL, p.Username)
+		ott, err := key.token(c.CAURL, c.Username)
 		if err != nil {
 			return err
 		}
@@ -144,15 +140,15 @@ func renewCertificate(ctx context.Context, p *Params, pth *paths) error {
 	if err != nil {
 		return fmt.Errorf("Unable to encode the client key: %w", err)
 	}
-	if err := os.MkdirAll(pth.dir, 0o700); err != nil {
-		return fmt.Errorf("Unable to create %s: %w", pth.dir, err)
+	if err := os.MkdirAll(c.dir, 0o700); err != nil {
+		return fmt.Errorf("Unable to create %s: %w", c.dir, err)
 	}
-	if err := os.WriteFile(pth.userKey, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
-		return fmt.Errorf("Unable to write %s: %w", pth.userKey, err)
+	if err := os.WriteFile(c.userKey, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		return fmt.Errorf("Unable to write %s: %w", c.userKey, err)
 	}
 	// Written last: a certificate on disk is taken to mean its key is there too.
-	if err := os.WriteFile(pth.userCrt, chain, 0o600); err != nil {
-		return fmt.Errorf("Unable to write %s: %w", pth.userCrt, err)
+	if err := os.WriteFile(c.userCrt, chain, 0o600); err != nil {
+		return fmt.Errorf("Unable to write %s: %w", c.userCrt, err)
 	}
 	return nil
 }

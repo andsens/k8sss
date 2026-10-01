@@ -227,19 +227,19 @@ func TestCertAgainstAStandInCA(t *testing.T) {
 				Username:        "system:admin",
 				KubeAPIHostname: "nas",
 			}
-			pth, err := p.paths()
+			c, err := p.Config()
 			if err != nil {
-				t.Fatalf("paths: %v", err)
+				t.Fatalf("Config: %v", err)
 			}
-			if err := os.MkdirAll(pth.dir, 0o700); err != nil {
+			if err := os.MkdirAll(c.dir, 0o700); err != nil {
 				t.Fatalf("creating config directory: %v", err)
 			}
-			if err := os.WriteFile(pth.clientCACrt, []byte(encodeCert(ca.cert)), 0o644); err != nil {
+			if err := os.WriteFile(c.clientCACrt, []byte(encodeCert(ca.cert)), 0o644); err != nil {
 				t.Fatalf("writing root: %v", err)
 			}
 
 			out := captureStdout(t, func() {
-				if err := Cert(context.Background(), p); err != nil {
+				if err := Cert(context.Background(), c); err != nil {
 					t.Fatalf("Cert: %v", err)
 				}
 			})
@@ -278,16 +278,16 @@ func TestCertAgainstAStandInCA(t *testing.T) {
 
 			// A second call reuses the certificate rather than minting one,
 			// since it is nowhere near its half life.
-			before, err := os.ReadFile(pth.userCrt)
+			before, err := os.ReadFile(c.userCrt)
 			if err != nil {
 				t.Fatalf("reading certificate: %v", err)
 			}
 			captureStdout(t, func() {
-				if err := Cert(context.Background(), p); err != nil {
+				if err := Cert(context.Background(), c); err != nil {
 					t.Fatalf("second Cert: %v", err)
 				}
 			})
-			after, err := os.ReadFile(pth.userCrt)
+			after, err := os.ReadFile(c.userCrt)
 			if err != nil {
 				t.Fatalf("reading certificate: %v", err)
 			}

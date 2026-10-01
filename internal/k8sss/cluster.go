@@ -29,43 +29,39 @@ import (
 const dialTimeout = 30 * time.Second
 
 // Setup establishes trust with a cluster and adds it to the kubeconfig.
-func Setup(ctx context.Context, p *Params) error {
-	pth, err := p.paths()
+func Setup(ctx context.Context, c *Config) error {
+	serverCA, err := fetchServerCA(ctx, c.KubeAPIURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to retrieve kube-api server certificate from %s: %w", c.KubeAPIURL, err)
 	}
-	serverCA, err := fetchServerCA(ctx, p.KubeAPIURL)
-	if err != nil {
-		return fmt.Errorf("Unable to retrieve kube-api server certificate from %s: %w", p.KubeAPIURL, err)
-	}
-	if err := confirmServerCA(pth, serverCA); err != nil {
+	if err := confirmServerCA(c, serverCA); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(pth.dir, 0o700); err != nil {
-		return fmt.Errorf("Unable to create %s: %w", pth.dir, err)
+	if err := os.MkdirAll(c.dir, 0o700); err != nil {
+		return fmt.Errorf("Unable to create %s: %w", c.dir, err)
 	}
 	serverCAPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCA.Raw})
-	if err := os.WriteFile(pth.serverCACrt, serverCAPEM, 0o644); err != nil {
-		return fmt.Errorf("Unable to write %s: %w", pth.serverCACrt, err)
+	if err := os.WriteFile(c.serverCACrt, serverCAPEM, 0o644); err != nil {
+		return fmt.Errorf("Unable to write %s: %w", c.serverCACrt, err)
 	}
 
 	slog.Info("Downloading Kubernetes API Client CA certificate")
-	clientCA, err := fetchCARoots(ctx, p.CAURL)
+	clientCA, err := fetchCARoots(ctx, c.CAURL)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(pth.clientCACrt, clientCA, 0o644); err != nil {
-		return fmt.Errorf("Unable to write %s: %w", pth.clientCACrt, err)
+	if err := os.WriteFile(c.clientCACrt, clientCA, 0o644); err != nil {
+		return fmt.Errorf("Unable to write %s: %w", c.clientCACrt, err)
 	}
 
-	slog.Info("Setting up " + abbreviateHome(pth.kubeconfig))
-	if err := writeKubeconfig(p, pth, serverCAPEM); err != nil {
+	slog.Info("Setting up " + abbreviateHome(c.kubeconfig))
+	if err := writeKubeconfig(c, serverCAPEM); err != nil {
 		return err
 	}
 	// Any certificate left from a previous setup was issued by a CA we have
 	// just replaced, so it is no longer worth keeping.
-	for _, path := range []string{pth.userCrt, pth.userKey} {
+	for _, path := range []string{c.userCrt, c.userKey} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("Unable to remove %s: %w", path, err)
 		}
@@ -76,9 +72,9 @@ func Setup(ctx context.Context, p *Params) error {
 // confirmServerCA is the trust-on-first-use step: the fingerprint of the CA
 // behind the Kubernetes API server is shown to the user the first time, and
 // checked against the stored copy on every later run.
-func confirmServerCA(pth *paths, serverCA *x509.Certificate) error {
+func confirmServerCA(c *Config, serverCA *x509.Certificate) error {
 	remote := x509util.Fingerprint(serverCA)
-	saved, err := pemutil.ReadCertificate(pth.serverCACrt)
+	saved, err := pemutil.ReadCertificate(c.serverCACrt)
 	switch {
 	case err == nil:
 		slog.Info("Checking existing Kubernetes API server CA certificate")
@@ -101,7 +97,7 @@ func confirmServerCA(pth *paths, serverCA *x509.Certificate) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("Unable to read %s: %w", pth.serverCACrt, err)
+		return fmt.Errorf("Unable to read %s: %w", c.serverCACrt, err)
 	}
 }
 
@@ -171,17 +167,13 @@ func fetchCARoots(ctx context.Context, caURL string) ([]byte, error) {
 
 // List names every cluster that has been set up, which is one directory per
 // Kubernetes API server hostname.
-func List(p *Params) error {
-	pth, err := p.paths()
-	if err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(pth.configDir)
+func List(c *Config) error {
+	entries, err := os.ReadDir(c.configDir)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("Unable to read %s: %w", pth.configDir, err)
+		return fmt.Errorf("Unable to read %s: %w", c.configDir, err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -193,43 +185,39 @@ func List(p *Params) error {
 
 // Remove drops the stored certificates along with the context and the cluster
 // and user it refers to.
-func Remove(p *Params) error {
-	if p.KubeAPIHostname == "" {
+func Remove(c *Config) error {
+	if c.KubeAPIHostname == "" {
 		return fmt.Errorf("KUBEAPI_HOSTNAME must not be empty")
 	}
-	pth, err := p.paths()
+	if err := os.RemoveAll(c.dir); err != nil {
+		return fmt.Errorf("Unable to remove %s: %w", c.dir, err)
+	}
+	config, err := loadKubeconfig(c.kubeconfig)
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(pth.dir); err != nil {
-		return fmt.Errorf("Unable to remove %s: %w", pth.dir, err)
-	}
-	config, err := loadKubeconfig(pth.kubeconfig)
-	if err != nil {
-		return err
-	}
-	context, ok := config.Contexts[p.Context]
+	context, ok := config.Contexts[c.Context]
 	if !ok {
 		slog.Warn(fmt.Sprintf("Unable to find the context '%s' in your kubeconfig. "+
-			"You will have to remove the user, cluster, and context manually", p.Context))
+			"You will have to remove the user, cluster, and context manually", c.Context))
 		return nil
 	}
 	delete(config.Clusters, context.Cluster)
 	delete(config.AuthInfos, context.AuthInfo)
-	delete(config.Contexts, p.Context)
-	if config.CurrentContext == p.Context {
+	delete(config.Contexts, c.Context)
+	if config.CurrentContext == c.Context {
 		config.CurrentContext = ""
 	}
-	if err := clientcmd.WriteToFile(*config, pth.kubeconfig); err != nil {
-		return fmt.Errorf("Unable to write %s: %w", pth.kubeconfig, err)
+	if err := clientcmd.WriteToFile(*config, c.kubeconfig); err != nil {
+		return fmt.Errorf("Unable to write %s: %w", c.kubeconfig, err)
 	}
 	return nil
 }
 
 // writeKubeconfig adds (or updates) the cluster, user and context for this
 // Kubernetes API server, leaving every other entry in the file alone.
-func writeKubeconfig(p *Params, pth *paths, serverCA []byte) error {
-	config, err := loadKubeconfig(pth.kubeconfig)
+func writeKubeconfig(c *Config, serverCA []byte) error {
+	config, err := loadKubeconfig(c.kubeconfig)
 	if err != nil {
 		return err
 	}
@@ -241,17 +229,17 @@ func writeKubeconfig(p *Params, pth *paths, serverCA []byte) error {
 		executable = resolved
 	}
 
-	cluster, ok := config.Clusters[p.Cluster]
+	cluster, ok := config.Clusters[c.Cluster]
 	if !ok {
 		cluster = api.NewCluster()
 	}
-	cluster.Server = p.KubeAPIURL
+	cluster.Server = c.KubeAPIURL
 	cluster.CertificateAuthorityData = serverCA
 	cluster.CertificateAuthority = ""
-	config.Clusters[p.Cluster] = cluster
-	slog.Info(fmt.Sprintf("Cluster %q set", p.Cluster))
+	config.Clusters[c.Cluster] = cluster
+	slog.Info(fmt.Sprintf("Cluster %q set", c.Cluster))
 
-	userName := p.Username + "@" + p.Cluster
+	userName := c.Username + "@" + c.Cluster
 	authInfo, ok := config.AuthInfos[userName]
 	if !ok {
 		authInfo = api.NewAuthInfo()
@@ -259,23 +247,23 @@ func writeKubeconfig(p *Params, pth *paths, serverCA []byte) error {
 	authInfo.Exec = &api.ExecConfig{
 		APIVersion: "client.authentication.k8s.io/v1beta1",
 		Command:    executable,
-		Args:       ExecArgs(p),
+		Args:       ExecArgs(&c.Params),
 	}
 	config.AuthInfos[userName] = authInfo
 	slog.Info(fmt.Sprintf("User %q set", userName))
 
-	context, ok := config.Contexts[p.Context]
+	context, ok := config.Contexts[c.Context]
 	if !ok {
 		context = api.NewContext()
 	}
-	context.Cluster = p.Cluster
+	context.Cluster = c.Cluster
 	context.AuthInfo = userName
-	config.Contexts[p.Context] = context
-	slog.Info(fmt.Sprintf("Context %q set", p.Context))
+	config.Contexts[c.Context] = context
+	slog.Info(fmt.Sprintf("Context %q set", c.Context))
 
 	// WriteToFile creates the directory and writes with 0600 itself.
-	if err := clientcmd.WriteToFile(*config, pth.kubeconfig); err != nil {
-		return fmt.Errorf("Unable to write %s: %w", pth.kubeconfig, err)
+	if err := clientcmd.WriteToFile(*config, c.kubeconfig); err != nil {
+		return fmt.Errorf("Unable to write %s: %w", c.kubeconfig, err)
 	}
 	return nil
 }
