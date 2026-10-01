@@ -1,8 +1,10 @@
 name: Build utilities image
 
 on:
+  # ** rather than *, since a single * does not match the slashes in the
+  # branch names Dependabot opens - so a bumped base image was never built.
   push:
-    branches: [ '*' ]
+    branches: ['**']
     paths:
     - .github/workflows/build-bootstrap.yaml
     - bootstrap.Dockerfile
