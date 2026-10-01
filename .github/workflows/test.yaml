@@ -1,8 +1,10 @@
 name: Test
 
 on:
+  # ** rather than *, so pushes to branches with a slash in the name - which
+  # is every branch Dependabot opens - are tested too.
   push:
-    branches: ['*']
+    branches: ['**']
     tags: ['!v*']
   workflow_call: {}
 

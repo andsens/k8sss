@@ -1,0 +1,35 @@
+name: Dependabot auto-merge
+
+# Dependabot pull requests run with read-only default permissions, so this
+# needs its own workflow with elevated permissions rather than a step tacked
+# onto test.yaml - see GitHub's docs on automating Dependabot:
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+    - name: Fetch Dependabot metadata
+      id: metadata
+      uses: dependabot/fetch-metadata@v3
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+    # This only *enables* GitHub's native auto-merge, which then waits for the
+    # required status checks. That needs "Allow auto-merge" turned on for the
+    # repository and the `go` and `lint` jobs from test.yaml set as required
+    # checks on main, or it is a no-op. Major bumps are left alone, being the
+    # ones likely to carry breaking changes.
+    - name: Enable auto-merge for patch and minor updates
+      if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+      run: gh pr merge --auto --squash "$PR_URL"
+      env:
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
