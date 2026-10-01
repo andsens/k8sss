@@ -32,13 +32,11 @@ jobs:
         go mod vendor
         want=$(nix hash path --type sha256 --sri vendor)
         rm -rf vendor
-        have=$(grep -oP '(?<=vendorHash = ")[^"]+' flake.nix)
-        if [ "$want" = "$have" ]; then
-          echo "vendorHash is already $have"
-          exit 0
-        fi
-        echo "vendorHash $have -> $want"
-        sed -i "s|vendorHash = \"$have\"|vendorHash = \"$want\"|" flake.nix
+        sed -i "s|vendorHash = \"sha256-[^\"]*\"|vendorHash = \"$want\"|" flake.nix
+        # Catches the pattern going stale, which would otherwise be
+        # indistinguishable from there being nothing to do.
+        grep -qF "vendorHash = \"$want\"" flake.nix
+        git diff --quiet flake.nix && { echo "vendorHash is already $want"; exit 0; }
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
         git commit -m 'Update vendorHash for the bumped dependencies' flake.nix
