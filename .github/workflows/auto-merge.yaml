@@ -28,9 +28,15 @@ jobs:
     # turned on for the repository and the `go`, `lint` and `nix` jobs from
     # test.yaml set as required checks on main, or it is a no-op. Major bumps
     # are left alone, being the ones likely to carry breaking changes.
+    #
+    # The merge runs under a personal access token because GITHUB_TOKEN has no
+    # permission that covers workflow files - there is no `workflows` key to
+    # grant - so it cannot merge the github-actions bumps, whose whole content
+    # is a change under .github/workflows. The token lives in Dependabot
+    # secrets, since these runs cannot read Actions secrets.
     - name: Enable auto-merge for patch and minor updates
       if: steps.metadata.outputs.update-type != 'version-update:semver-major'
       run: gh pr merge --auto --squash "$PR_URL"
       env:
         PR_URL: ${{ github.event.pull_request.html_url }}
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
