@@ -14,8 +14,12 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    # Who opened the pull request, rather than whoever triggered this run.
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    # Dependabot has to have opened the pull request, and triggered this run:
+    # the commit pins.yaml pushes triggers one as the token's owner, which
+    # cannot read the token. Auto-merge enabled before then carries over.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]'
     steps:
     - name: Fetch Dependabot metadata
       id: metadata
