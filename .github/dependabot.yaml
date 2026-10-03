@@ -6,8 +6,7 @@ updates:
     interval: weekly
   # The step-ca client pulls in over a hundred indirect dependencies, so
   # ungrouped bumps would open a flood of pull requests every week. Minor and
-  # patch updates arrive as one; majors stay on their own, where the
-  # auto-merge workflow leaves them for review.
+  # patch updates arrive as one; majors stay on their own.
   groups:
     go:
       patterns:

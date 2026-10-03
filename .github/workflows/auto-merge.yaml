@@ -21,18 +21,11 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.actor == 'dependabot[bot]'
     steps:
-    - name: Fetch Dependabot metadata
-      id: metadata
-      uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-
     # This only *enables* GitHub's native auto-merge, which then waits for the
     # required status checks on whatever the head commit ends up being - which
     # may be a commit pins.yaml added. That needs "Allow auto-merge"
     # turned on for the repository and the `go`, `lint` and `nix` jobs from
-    # test.yaml set as required checks on main, or it is a no-op. Major bumps
-    # are left alone, being the ones likely to carry breaking changes.
+    # test.yaml set as required checks on main, or it is a no-op.
     #
     # The merge runs under a personal access token because GITHUB_TOKEN has no
     # permission that covers workflow files - there is no `workflows` key to
@@ -41,8 +34,7 @@ jobs:
     # secrets, since these runs cannot read Actions secrets. As a fine-grained
     # token for this repository it needs read and write on contents, pull
     # requests and workflows.
-    - name: Enable auto-merge for patch and minor updates
-      if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+    - name: Enable auto-merge
       run: gh pr merge --auto --squash "$PR_URL"
       env:
         PR_URL: ${{ github.event.pull_request.html_url }}
