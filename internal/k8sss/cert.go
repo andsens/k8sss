@@ -114,7 +114,7 @@ func renewCertificate(ctx context.Context, c *Config) error {
 	for remaining := renewAttempts - 1; ; remaining-- {
 		// The CA remembers every token it has seen, so each attempt needs a
 		// freshly minted one.
-		ott, err := key.token(c.CAURL, c.Username)
+		ott, err := key.token(c.CAURL, c.Username, csr)
 		if err != nil {
 			return err
 		}

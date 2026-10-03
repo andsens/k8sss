@@ -23,7 +23,6 @@ import (
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/certificates/ca"
 	"go.step.sm/crypto/jose"
-	"go.step.sm/crypto/x509util"
 )
 
 // The deployment's ca.json issues 30 minute certificates and admin.tpl is what
@@ -183,22 +182,14 @@ func TestTheRealCARejectsAReplayedToken(t *testing.T) {
 		t.Fatalf("openSigningKey: %v", err)
 	}
 	defer signing.Close()
-	ott, err := signing.token(config.CAURL, config.Username)
-	if err != nil {
-		t.Fatalf("token: %v", err)
-	}
-
 	client, err := ca.NewClient(config.CAURL, ca.WithRootFile(config.clientCACrt))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	csr := testCSR(t, config.Username)
+	ott, err := signing.token(config.CAURL, config.Username, csr)
 	if err != nil {
-		t.Fatalf("generating key: %v", err)
-	}
-	csr, err := x509util.CreateCertificateRequest(config.Username, []string{config.Username}, private)
-	if err != nil {
-		t.Fatalf("creating csr: %v", err)
+		t.Fatalf("token: %v", err)
 	}
 	request := &api.SignRequest{CsrPEM: api.CertificateRequest{CertificateRequest: csr}, OTT: ott}
 	if _, err := client.Sign(request); err != nil {
@@ -206,6 +197,56 @@ func TestTheRealCARejectsAReplayedToken(t *testing.T) {
 	}
 	if _, err := client.Sign(request); err == nil {
 		t.Error("the CA accepted the same token twice")
+	}
+}
+
+// Whoever gets hold of an unused token can only redeem it for the key it was
+// minted for, because the token carries the fingerprint of the CSR.
+func TestTheRealCARejectsATokenForAnotherCSR(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	const comment = "tester@workstation"
+	t.Setenv("SSH_AUTH_SOCK", startAgent(t, key, comment))
+	testHome(t)
+
+	testCA := newTestCA(t)
+	config := realCAConfig(t, testCA, key.Public(), comment)
+
+	signing, err := openSigningKey(config.KeyURI)
+	if err != nil {
+		t.Fatalf("openSigningKey: %v", err)
+	}
+	defer signing.Close()
+	client, err := ca.NewClient(config.CAURL, ca.WithRootFile(config.clientCACrt))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	ott, err := signing.token(config.CAURL, config.Username, testCSR(t, config.Username))
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	other := testCSR(t, config.Username)
+	if _, err := client.Sign(&api.SignRequest{
+		CsrPEM: api.CertificateRequest{CertificateRequest: other},
+		OTT:    ott,
+	}); err == nil {
+		t.Error("the CA signed a CSR the token was not minted for")
+	}
+
+	// The same request with a token minted for it goes through, so the
+	// refusal above was down to the fingerprint.
+	ott, err = signing.token(config.CAURL, config.Username, other)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	if _, err := client.Sign(&api.SignRequest{
+		CsrPEM: api.CertificateRequest{CertificateRequest: other},
+		OTT:    ott,
+	}); err != nil {
+		t.Errorf("the CA refused a token minted for the CSR: %v", err)
 	}
 }
 

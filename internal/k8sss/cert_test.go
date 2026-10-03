@@ -6,9 +6,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
@@ -133,6 +135,9 @@ func startCA(t *testing.T, ca *testCA, authorized crypto.PublicKey) *standInCA {
 			Audience string   `json:"aud"`
 			SANS     []string `json:"sans"`
 			ID       string   `json:"jti"`
+			CNF      struct {
+				Fingerprint string `json:"x5rt#S256"`
+			} `json:"cnf"`
 		}
 		if err := json.Unmarshal(payload, &claims); err != nil {
 			http.Error(w, `{"message":"malformed claims"}`, http.StatusUnauthorized)
@@ -158,6 +163,12 @@ func startCA(t *testing.T, ca *testCA, authorized crypto.PublicKey) *standInCA {
 		}
 		if request.CsrPEM.CertificateRequest == nil || request.CsrPEM.CheckSignature() != nil {
 			http.Error(w, `{"message":"invalid csr"}`, http.StatusBadRequest)
+			return
+		}
+		// step-ca's JWK provisioner signs only the CSR the token names.
+		sum := sha256.Sum256(request.CsrPEM.Raw)
+		if claims.CNF.Fingerprint != base64.RawURLEncoding.EncodeToString(sum[:]) {
+			http.Error(w, `{"message":"csr does not match the token fingerprint"}`, http.StatusForbidden)
 			return
 		}
 		if request.CsrPEM.Subject.CommonName != claims.Subject {
