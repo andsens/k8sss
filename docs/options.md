@@ -12,12 +12,18 @@ boolean
 
 
 *Default:*
-` false `
+
+```nix
+false
+```
 
 
 
 *Example:*
-` true `
+
+```nix
+true
+```
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
@@ -36,7 +42,10 @@ list of string
 
 
 *Default:*
-` "All authorized SSH keys of all users in 'wheel' converted to JWKs" `
+
+```nix
+"All authorized SSH keys without options of all users in 'wheel' converted to JWKs"
+```
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
@@ -57,7 +66,10 @@ string
 
 
 *Default:*
-` "/var/lib/rancher/k3s/server/tls/client-ca.crt" `
+
+```nix
+"/var/lib/rancher/k3s/server/tls/client-ca.crt"
+```
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
@@ -78,7 +90,10 @@ string
 
 
 *Default:*
-` "/var/lib/rancher/k3s/server/tls/client-ca.key" `
+
+```nix
+"/var/lib/rancher/k3s/server/tls/client-ca.key"
+```
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
@@ -99,7 +114,10 @@ list of string
 
 
 *Default:*
-` [ ] `
+
+```nix
+[ ]
+```
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
@@ -120,7 +138,10 @@ null or signed integer
 
 
 *Default:*
-` 9000 `
+
+```nix
+9000
+```
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)

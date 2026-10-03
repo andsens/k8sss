@@ -1,5 +1,13 @@
 ---
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8sss
+  labels:
+    app.kubernetes.io/name: k8sss
+automountServiceAccountToken: false
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: k8sss
@@ -32,6 +40,7 @@ spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       serviceAccountName: k8sss
+      automountServiceAccountToken: false
       securityContext:
         fsGroup: 1000
       initContainers:
@@ -40,7 +49,11 @@ spec:
         command: [bash]
         args: [-c, /home/step/setup.sh]
         securityContext:
+          allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
+          capabilities:
+            add: [CHOWN]
+            drop: [ALL]
         env:
         - name: DNSNAMES
           valueFrom:
@@ -73,7 +86,11 @@ spec:
         command: [/usr/local/bin/step-ca]
         args: [/home/step/ca.json]
         securityContext:
+          allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
+          capabilities:
+            add: [NET_BIND_SERVICE]
+            drop: [ALL]
         ports:
         - name: api
           containerPort: 9000

@@ -8,17 +8,22 @@
 with builtins;
 let
   cfg = config.k8sss;
-  adminSSHKeys = lib.flatten (
-    map (u: u.openssh.authorizedKeys.keys) (
-      lib.sortOn (u: u.uid) (
-        filter (
-          u:
-          u.enable
-          && u.isNormalUser
-          && u.uid != null
-          && elem "wheel" u.extraGroups
-          && length u.openssh.authorizedKeys.keys > 0
-        ) (attrValues config.users.users)
+  # A key with authorized_keys options (restrict, command=, from=, ...) is
+  # limited in a way its JWK cannot carry over, so it is left out.
+  isPlainKey = key: match "(ssh|ecdsa-sha2|sk)-[^ ]+ .*" (lib.trim key) != null;
+  adminSSHKeys = filter isPlainKey (
+    lib.flatten (
+      map (u: u.openssh.authorizedKeys.keys) (
+        lib.sortOn (u: u.uid) (
+          filter (
+            u:
+            u.enable
+            && u.isNormalUser
+            && u.uid != null
+            && elem "wheel" u.extraGroups
+            && length u.openssh.authorizedKeys.keys > 0
+          ) (attrValues config.users.users)
+        )
       )
     )
   );
@@ -32,7 +37,7 @@ let
             runHook preInstall
             ${lib.join "\n" (
               map (key: ''
-                jwk=$(${lib.getExe pkgs.step-cli} crypto key format --jwk <<<"${key}")
+                jwk=$(${lib.getExe pkgs.step-cli} crypto key format --jwk <<<${lib.escapeShellArg key})
                 kid=$(${lib.getExe pkgs.step-cli} crypto jwk thumbprint <<<"$jwk")
                 ${lib.getExe pkgs.jq} -c --arg kid "$kid" '.kid=$kid' <<<"$jwk" >>$out
               '') adminSSHKeys
@@ -57,7 +62,7 @@ in
       description = "List of JWKs that may request a kubeapi client certificate";
       type = lib.types.listOf lib.types.str;
       default = adminJWKs;
-      defaultText = "All authorized SSH keys of all users in 'wheel' converted to JWKs";
+      defaultText = "All authorized SSH keys without options of all users in 'wheel' converted to JWKs";
     };
     clientCaCertPath = lib.mkOption {
       description = "Path to the kube client certificate";
@@ -119,6 +124,16 @@ in
             "setup.sh" = builtins.readFile ../../../deploy/base/setup.sh;
           };
         };
+        serviceAccount = {
+          apiVersion = "v1";
+          kind = "ServiceAccount";
+          metadata = {
+            namespace = "k8sss";
+            name = "k8sss";
+            labels."app.kubernetes.io/name" = "k8sss";
+          };
+          automountServiceAccountToken = false;
+        };
         service = {
           apiVersion = "v1";
           kind = "Service";
@@ -151,6 +166,7 @@ in
               spec = {
                 nodeSelector."node-role.kubernetes.io/control-plane" = "true";
                 serviceAccountName = "k8sss";
+                automountServiceAccountToken = false;
                 securityContext.fsGroup = 1000;
                 initContainersByName.setup-k8sss-config = {
                   # Rewritten by .github/workflows/pins.yaml to the
