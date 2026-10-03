@@ -7,10 +7,12 @@ on:
   # none of its own.
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   test:
     uses: ./.github/workflows/test.yaml
-    secrets: inherit
 
   build-bootstrap:
     uses: ./.github/workflows/build-bootstrap.yaml
@@ -19,7 +21,6 @@ jobs:
       packages: write
       attestations: write
       id-token: write
-    secrets: inherit
 
   # The binary is named for the `uname -s`/`uname -m` of the machine it is
   # meant for, which is what the upkg manifest below selects on.
@@ -50,9 +51,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version-file: go.mod
     - name: Install pcsclite
@@ -68,7 +69,7 @@ jobs:
     - name: Check that the binary is for the right architecture
       run: file "k8sss-${{ matrix.target }}"
     - name: Upload
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: k8sss-${{ matrix.target }}
         path: k8sss-${{ matrix.target }}
@@ -82,9 +83,9 @@ jobs:
     name: Create GitHub release
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     - name: Download binaries
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         path: dist
         merge-multiple: true
@@ -93,7 +94,7 @@ jobs:
     # everywhere.
     - name: Build the upkg manifest
       run: |
-        base="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+        base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
         for binary in dist/k8sss-*; do
           name=$(basename "$binary")
           os_arch=${name#k8sss-}
@@ -103,7 +104,7 @@ jobs:
             --arg os_arch "${os_arch%%-*}/${os_arch#*-}" \
             '{file: $file, sha256: $sha256, name: "k8sss", "os/arch": $os_arch}'
         done | jq -s \
-          --arg version "${{ github.ref_name }}" \
+          --arg version "$GITHUB_REF_NAME" \
           '{
             "$schema": "https://schemas.orbit.dev/upkg/upkg-v0.31.1.schema.json",
             name: "k8sss",
@@ -121,7 +122,7 @@ jobs:
           echo "## Installation"
           echo
           echo '```'
-          echo "upkg add -g '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/k8sss.upkg.json' $manifest_sha"
+          echo "upkg add -g '$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/k8sss.upkg.json' $manifest_sha"
           echo '```'
           echo
           echo "The Linux binaries link against pcsc-lite for YubiKey and PKCS#11"
@@ -129,7 +130,7 @@ jobs:
           echo "\`pcsc-lite\` installed even when authenticating with an SSH agent"
           echo "or TPM key. macOS needs nothing extra."
         } > notes.md
-        gh release create "${{ github.ref_name }}" \
-          --title "${{ github.ref_name }}" \
+        gh release create "$GITHUB_REF_NAME" \
+          --title "$GITHUB_REF_NAME" \
           --notes-file notes.md \
           k8sss.upkg.json dist/k8sss-*
