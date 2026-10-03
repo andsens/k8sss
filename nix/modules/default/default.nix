@@ -170,7 +170,7 @@ in
                 initContainersByName.setup-k8sss-config = {
                   # Rewritten by .github/workflows/pins.yaml to the
                   # sha-tagged image built from the bumping commit.
-                  image = "ghcr.io/andsens/k8sss-bootstrap:0.3.0";
+                  image = "ghcr.io/andsens/k8sss-bootstrap:sha-5e1e919";
                   command = [ "bash" ];
                   args = [ "/home/step/setup.sh" ];
                   securityContext = {
