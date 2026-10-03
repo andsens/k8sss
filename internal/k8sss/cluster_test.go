@@ -1,11 +1,25 @@
 package k8sss
 
 import (
+	"context"
+	"crypto"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"io"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"go.step.sm/crypto/pemutil"
+	authv1 "k8s.io/api/authentication/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -221,5 +235,246 @@ func TestListNamesTheConfiguredClusters(t *testing.T) {
 	}
 	if err := List(testConfig(t)); err != nil {
 		t.Errorf("List: %v", err)
+	}
+}
+
+// startAPIServer stands in for the kube-api server's SelfSubjectReview
+// endpoint. Like the real one, it asks for a client certificate without
+// requiring one, and treats a certificate that does not chain to clientCA as
+// no certificate at all: a 401, or system:anonymous when anonymous is set.
+func startAPIServer(t *testing.T, serverCA, clientCA *testCA, anonymous bool) string {
+	t.Helper()
+	roots := x509.NewCertPool()
+	roots.AddCert(clientCA.cert)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /apis/authentication.k8s.io/v1/selfsubjectreviews", func(w http.ResponseWriter, r *http.Request) {
+		review := authv1.SelfSubjectReview{}
+		review.APIVersion, review.Kind = "authentication.k8s.io/v1", "SelfSubjectReview"
+		peers := r.TLS.PeerCertificates
+		intermediates := x509.NewCertPool()
+		for _, cert := range peers[min(1, len(peers)):] {
+			intermediates.AddCert(cert)
+		}
+		switch {
+		case len(peers) > 0 && verifies(peers[0], roots, intermediates):
+			review.Status.UserInfo.Username = peers[0].Subject.CommonName
+		case anonymous:
+			review.Status.UserInfo.Username = "system:anonymous"
+		default:
+			http.Error(w, `{"kind":"Status","code":401}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(&review)
+	})
+	server := httptest.NewUnstartedServer(mux)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{serverCA.cert.Raw}, PrivateKey: serverCA.key}},
+		ClientAuth:   tls.RequestClientCert,
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+func verifies(leaf *x509.Certificate, roots, intermediates *x509.CertPool) bool {
+	_, err := leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	return err == nil
+}
+
+// startInterceptor sits in front of a CA the way someone intercepting port
+// 9000 would: it terminates TLS with a forged root, answers /roots.pem itself
+// and relays signing requests to upstream.
+func startInterceptor(t *testing.T, forged *testCA, roots string, upstream string) string {
+	t.Helper()
+	target, err := url.Parse(upstream)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", upstream, err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	//nolint:gosec // the upstream is a test CA
+	proxy.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/roots.pem", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, roots) })
+	mux.Handle("/", proxy)
+	server := httptest.NewUnstartedServer(mux)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{{
+		Certificate: [][]byte{forged.cert.Raw},
+		PrivateKey:  forged.key,
+	}}}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+// answerPrompts feeds the confirmation prompts.
+func answerPrompts(t *testing.T, answers string) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating pipe: %v", err)
+	}
+	io.WriteString(write, answers)
+	write.Close()
+	original := os.Stdin
+	os.Stdin = read
+	t.Cleanup(func() { os.Stdin = original; read.Close() })
+}
+
+func setupConfig(t *testing.T, kubeAPIURL, caURL string) *Config {
+	t.Helper()
+	params := testParams()
+	params.KubeAPIURL, params.CAURL = kubeAPIURL, caURL
+	config, err := params.Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	return config
+}
+
+// snapshot reads every file setup writes.
+func snapshot(t *testing.T, c *Config) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	for _, path := range []string{c.serverCACrt, c.clientCACrt, c.userCrt, c.userKey, c.kubeconfig} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		files[path] = string(data)
+	}
+	return files
+}
+
+// A setup cluster: the client CA behind step-ca and the kube-api server that
+// trusts it, with setup already run against both.
+type setupCluster struct {
+	signer   crypto.Signer
+	clientCA *testCA
+	serverCA *testCA
+	ca       *standInCA
+	config   *Config
+}
+
+func newSetupCluster(t *testing.T) *setupCluster {
+	t.Helper()
+	signer := testKeys(t)["ecdsa"]
+	const comment = "tester@workstation"
+	t.Setenv("SSH_AUTH_SOCK", startAgent(t, signer, comment))
+	testHome(t)
+
+	cluster := &setupCluster{signer: signer, clientCA: newTestCA(t), serverCA: newTestCA(t)}
+	cluster.ca = startCA(t, cluster.clientCA, signer.Public())
+	cluster.config = setupConfig(t,
+		startAPIServer(t, cluster.serverCA, cluster.clientCA, false),
+		cluster.ca.url)
+	cluster.config.KeyURI = "sshagentkms:" + comment
+	answerPrompts(t, "y\n")
+	if err := Setup(context.Background(), cluster.config); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	return cluster
+}
+
+func TestSetupWritesTheCertificatesAndKubeconfig(t *testing.T) {
+	cluster := newSetupCluster(t)
+	c := cluster.config
+
+	for path, want := range map[string]*x509.Certificate{
+		c.serverCACrt: cluster.serverCA.cert,
+		c.clientCACrt: cluster.clientCA.cert,
+	} {
+		got, err := pemutil.ReadCertificate(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if !got.Equal(want) {
+			t.Errorf("%s holds the wrong certificate", path)
+		}
+	}
+	// The certificate issued to check the client CA is kept, so the first
+	// kubectl call does not need another signature.
+	if _, err := tls.LoadX509KeyPair(c.userCrt, c.userKey); err != nil {
+		t.Errorf("the issued certificate was not kept: %v", err)
+	}
+	if renew, err := needsRenewal(c.userCrt); err != nil || renew {
+		t.Errorf("the kept certificate is due for renewal: (%v, %v)", renew, err)
+	}
+	config, err := clientcmd.LoadFromFile(c.kubeconfig)
+	if err != nil {
+		t.Fatalf("loading kubeconfig: %v", err)
+	}
+	if got := config.Clusters["nas"].Server; got != c.KubeAPIURL {
+		t.Errorf("server: got %q, want %q", got, c.KubeAPIURL)
+	}
+}
+
+// Each case re-runs setup against a cluster that was set up correctly, with
+// the CA swapped for something the kube-api server does not trust. Setup has
+// to fail at the right check and leave the working setup alone.
+func TestSetupRejectsAClientCATheServerDoesNotTrust(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		anonymous bool
+		caURL     func(t *testing.T, cluster *setupCluster, forged *testCA) string
+		want      string
+	}{{
+		name: "a forged CA that signs the CSR itself",
+		caURL: func(t *testing.T, cluster *setupCluster, forged *testCA) string {
+			return startCA(t, forged, cluster.signer.Public()).url
+		},
+		want: "rejected the issued certificate",
+	}, {
+		name:      "a forged CA and an apiserver that lets anonymous requests through",
+		anonymous: true,
+		caURL: func(t *testing.T, cluster *setupCluster, forged *testCA) string {
+			return startCA(t, forged, cluster.signer.Public()).url
+		},
+		want: `took the issued certificate for "system:anonymous"`,
+	}, {
+		name: "a forged root in front of the real CA",
+		caURL: func(t *testing.T, cluster *setupCluster, forged *testCA) string {
+			return startInterceptor(t, forged, encodeCert(forged.cert), cluster.ca.url)
+		},
+		want: "does not chain to its root",
+	}, {
+		name: "a forged root bundled with the real one",
+		caURL: func(t *testing.T, cluster *setupCluster, forged *testCA) string {
+			return startInterceptor(t, forged,
+				encodeCert(cluster.clientCA.cert)+encodeCert(forged.cert), cluster.ca.url)
+		},
+		want: "more than its root certificate",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := newSetupCluster(t)
+			before := snapshot(t, cluster.config)
+
+			c := *cluster.config
+			c.KubeAPIURL = startAPIServer(t, cluster.serverCA, cluster.clientCA, tc.anonymous)
+			c.CAURL = tc.caURL(t, cluster, newTestCA(t))
+			err := Setup(context.Background(), &c)
+			if err == nil {
+				t.Fatal("Setup trusted a CA the kube-api server does not")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Setup failed for the wrong reason:\n got %v\nwant %q", err, tc.want)
+			}
+			if after := snapshot(t, cluster.config); !maps.Equal(before, after) {
+				t.Error("the failed setup changed the files of the earlier one")
+			}
+		})
+	}
+}
+
+func TestSetupRefusesPlainHTTP(t *testing.T) {
+	testHome(t)
+	c := setupConfig(t, "http://nas:6443", "https://nas:9000")
+	if err := Setup(context.Background(), c); err == nil {
+		t.Error("Setup accepted an http:// kube-api URL")
 	}
 }

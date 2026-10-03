@@ -91,23 +91,44 @@ func pastHalfLife(cert *x509.Certificate, now time.Time) bool {
 }
 
 func renewCertificate(ctx context.Context, c *Config) error {
-	client, err := ca.NewClient(c.CAURL, ca.WithRootFile(c.clientCACrt))
+	root, err := os.ReadFile(c.clientCACrt)
 	if err != nil {
-		return fmt.Errorf("Unable to reach the CA at %s, has `k8sss setup` been run for this cluster?: %w", c.CAURL, err)
+		return fmt.Errorf("Unable to read %s, has `k8sss setup` been run for this cluster?: %w", c.clientCACrt, err)
+	}
+	cred, err := issueCertificate(ctx, c, root)
+	if err != nil {
+		return err
+	}
+	return writeCredential(c, cred)
+}
+
+// credential is an issued client certificate with its key, both PEM encoded.
+type credential struct {
+	chain []byte
+	key   []byte
+	leaf  *x509.Certificate
+}
+
+// issueCertificate requests a client certificate from the CA, trusting root
+// for the connection to it.
+func issueCertificate(ctx context.Context, c *Config, root []byte) (*credential, error) {
+	client, err := ca.NewClient(c.CAURL, ca.WithCABundle(root))
+	if err != nil {
+		return nil, fmt.Errorf("Unable to reach the CA at %s: %w", c.CAURL, err)
 	}
 	key, err := openSigningKey(c.KeyURI)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer key.Close()
 
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return fmt.Errorf("Unable to generate a client key: %w", err)
+		return nil, fmt.Errorf("Unable to generate a client key: %w", err)
 	}
 	csr, err := x509util.CreateCertificateRequest(c.Username, []string{c.Username}, private)
 	if err != nil {
-		return fmt.Errorf("Unable to create a certificate request: %w", err)
+		return nil, fmt.Errorf("Unable to create a certificate request: %w", err)
 	}
 
 	var resp *api.SignResponse
@@ -116,7 +137,7 @@ func renewCertificate(ctx context.Context, c *Config) error {
 		// freshly minted one.
 		ott, err := key.token(c.CAURL, c.Username, csr)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		resp, err = client.SignWithContext(ctx, &api.SignRequest{
 			CsrPEM: api.CertificateRequest{CertificateRequest: csr},
@@ -126,7 +147,7 @@ func renewCertificate(ctx context.Context, c *Config) error {
 			break
 		}
 		if remaining <= 0 {
-			return fmt.Errorf("Failed to issue kube-api certificate (aborting):\n%w", err)
+			return nil, fmt.Errorf("Failed to issue kube-api certificate (aborting):\n%w", err)
 		}
 		slog.Error(fmt.Sprintf("Failed to issue kube-api certificate (%d tries remaining):\n%s", remaining, err))
 		time.Sleep(renewBackoff)
@@ -134,20 +155,32 @@ func renewCertificate(ctx context.Context, c *Config) error {
 
 	chain, err := certChain(resp)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	leaf, err := pemutil.ParseCertificate(chain)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to parse the issued certificate: %w", err)
 	}
 	der, err := x509.MarshalPKCS8PrivateKey(private)
 	if err != nil {
-		return fmt.Errorf("Unable to encode the client key: %w", err)
+		return nil, fmt.Errorf("Unable to encode the client key: %w", err)
 	}
+	return &credential{
+		chain: chain,
+		key:   pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
+		leaf:  leaf,
+	}, nil
+}
+
+func writeCredential(c *Config, cred *credential) error {
 	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		return fmt.Errorf("Unable to create %s: %w", c.dir, err)
 	}
-	if err := os.WriteFile(c.userKey, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+	if err := os.WriteFile(c.userKey, cred.key, 0o600); err != nil {
 		return fmt.Errorf("Unable to write %s: %w", c.userKey, err)
 	}
 	// Written last: a certificate on disk is taken to mean its key is there too.
-	if err := os.WriteFile(c.userCrt, chain, 0o600); err != nil {
+	if err := os.WriteFile(c.userCrt, cred.chain, 0o600); err != nil {
 		return fmt.Errorf("Unable to write %s: %w", c.userCrt, err)
 	}
 	return nil

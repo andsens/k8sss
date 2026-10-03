@@ -9,6 +9,7 @@ require (
 	github.com/smallstep/cli v0.31.0
 	go.step.sm/crypto v0.91.0
 	golang.org/x/crypto v0.57.0
+	k8s.io/api v0.37.1
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.37.1
 )

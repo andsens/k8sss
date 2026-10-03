@@ -80,6 +80,8 @@ $ k8sss setup nas:6443
 The root certificate fingerprint is f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2
 Do you want to establish that trust now? [y/N]y
 2026/01/01 12:00:00 INFO Downloading Kubernetes API Client CA certificate
+2026/01/01 12:00:00 INFO Issuing a client certificate to verify the client CA with
+2026/01/01 12:00:00 INFO Checking that the kube-api server accepts the issued certificate
 2026/01/01 12:00:00 INFO Setting up ~/.kube/config.yaml
 2026/01/01 12:00:00 INFO Cluster "nas" set
 2026/01/01 12:00:00 INFO User "system:admin@nas" set
@@ -89,6 +91,12 @@ $ kubectl --context nas -n kube-system get pod
 NAME                       READY   STATUS    RESTARTS   AGE
 coredns-77dbf85789-g7qkm   2/2     Running   0          2d15h
 ```
+
+You confirm the kube-api server's CA by its fingerprint. The client CA that
+step-ca serves is checked instead: `setup` has a certificate issued, which uses
+the authentication key once (an SSH agent confirmation or a YubiKey touch, for
+example), and only trusts the client CA once that certificate chains to it and
+the kube-api server accepts it. Nothing is written until both checks pass.
 
 Run `k8sss --help` for details on how to adjust things like the smallstep CA
 endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username

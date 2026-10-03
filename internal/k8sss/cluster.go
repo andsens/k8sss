@@ -2,9 +2,11 @@ package k8sss
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -22,6 +24,8 @@ import (
 
 	"go.step.sm/crypto/pemutil"
 	"go.step.sm/crypto/x509util"
+	authv1 "k8s.io/api/authentication/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -29,13 +33,56 @@ import (
 const dialTimeout = 30 * time.Second
 
 // Setup establishes trust with a cluster and adds it to the kubeconfig.
+//
+// The kube-api server CA is confirmed by the user. The client CA cannot be
+// checked the same way, so it is only trusted once a certificate issued
+// through it chains to it and is accepted by the kube-api server. Nothing is
+// written before both checks pass.
 func Setup(ctx context.Context, c *Config) error {
+	// The kube-api server check below means nothing over plain HTTP.
+	if parsed, err := url.Parse(c.KubeAPIURL); err != nil || parsed.Scheme != "https" {
+		return fmt.Errorf("KUBEAPI_URL '%s' must be an https:// URL", c.KubeAPIURL)
+	}
 	serverCA, err := fetchServerCA(ctx, c.KubeAPIURL)
 	if err != nil {
 		return fmt.Errorf("Unable to retrieve kube-api server certificate from %s: %w", c.KubeAPIURL, err)
 	}
 	if err := confirmServerCA(c, serverCA); err != nil {
 		return err
+	}
+
+	slog.Info("Downloading Kubernetes API Client CA certificate")
+	clientCA, err := fetchCARoot(ctx, c.CAURL)
+	if err != nil {
+		return err
+	}
+	clientCAPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCA.Raw})
+
+	slog.Info("Issuing a client certificate to verify the client CA with")
+	cred, err := issueCertificate(ctx, c, clientCAPEM)
+	if err != nil {
+		return err
+	}
+	untrusted := func(reason string) error {
+		return fmt.Errorf("The CA at %s is not the one the kube-api server at %s trusts: %s. "+
+			"Either --ca-url is misconfigured (it may point at another cluster), "+
+			"or the connection to the CA is being intercepted", c.CAURL, c.KubeAPIURL, reason)
+	}
+	// Without this, a forged root in front of the real CA would pass the
+	// kube-api server check and stay trusted.
+	if err := verifyClientCert(cred, clientCA); err != nil {
+		return untrusted(fmt.Sprintf("the issued certificate does not chain to its root (%s)", err))
+	}
+	slog.Info("Checking that the kube-api server accepts the issued certificate")
+	username, err := whoAmI(ctx, c.KubeAPIURL, serverCA, cred)
+	if err != nil {
+		return err
+	}
+	if username == "" {
+		return untrusted("the kube-api server rejected the issued certificate")
+	}
+	if username != c.Username {
+		return untrusted(fmt.Sprintf("the kube-api server took the issued certificate for %q", username))
 	}
 
 	if err := os.MkdirAll(c.dir, 0o700); err != nil {
@@ -45,28 +92,15 @@ func Setup(ctx context.Context, c *Config) error {
 	if err := os.WriteFile(c.serverCACrt, serverCAPEM, 0o644); err != nil {
 		return fmt.Errorf("Unable to write %s: %w", c.serverCACrt, err)
 	}
-
-	slog.Info("Downloading Kubernetes API Client CA certificate")
-	clientCA, err := fetchCARoots(ctx, c.CAURL)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(c.clientCACrt, clientCA, 0o644); err != nil {
+	if err := os.WriteFile(c.clientCACrt, clientCAPEM, 0o644); err != nil {
 		return fmt.Errorf("Unable to write %s: %w", c.clientCACrt, err)
 	}
-
-	slog.Info("Setting up " + abbreviateHome(c.kubeconfig))
-	if err := writeKubeconfig(c, serverCAPEM); err != nil {
+	// Kept, so kubectl does not need another signature right away.
+	if err := writeCredential(c, cred); err != nil {
 		return err
 	}
-	// Any certificate left from a previous setup was issued by a CA we have
-	// just replaced, so it is no longer worth keeping.
-	for _, path := range []string{c.userCrt, c.userKey} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("Unable to remove %s: %w", path, err)
-		}
-	}
-	return nil
+	slog.Info("Setting up " + abbreviateHome(c.kubeconfig))
+	return writeKubeconfig(c, serverCAPEM)
 }
 
 // confirmServerCA is the trust-on-first-use step: the fingerprint of the CA
@@ -130,12 +164,11 @@ func fetchServerCA(ctx context.Context, kubeAPIURL string) (*x509.Certificate, e
 	return chain[len(chain)-1], nil
 }
 
-// fetchCARoots downloads the CA's root bundle, which for k8sss is the
-// Kubernetes client CA. This is the one unverified request k8sss makes: the CA
-// client needs a root before it can verify anything, and there is nothing to
-// check this one against. It is the same request `step ca root` makes without
-// a fingerprint.
-func fetchCARoots(ctx context.Context, caURL string) ([]byte, error) {
+// fetchCARoot downloads the CA's root, which for k8sss is the Kubernetes
+// client CA. The request is unverified, since the CA client needs a root
+// before it can verify anything; Setup checks the root afterwards. It is the
+// same request `step ca root` makes without a fingerprint.
+func fetchCARoot(ctx context.Context, caURL string) (*x509.Certificate, error) {
 	client := &http.Client{
 		Timeout: dialTimeout,
 		Transport: &http.Transport{
@@ -159,10 +192,91 @@ func fetchCARoots(ctx context.Context, caURL string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("The CA returned %s when asked for its roots", resp.Status)
 	}
-	if block, _ := pem.Decode(body); block == nil {
+	block, rest := pem.Decode(body)
+	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, fmt.Errorf("The CA did not return a PEM encoded root certificate")
 	}
-	return body, nil
+	// A second root could be a forged one riding along with the real one,
+	// and the checks in Setup would not notice it.
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return nil, fmt.Errorf("The CA at %s returned more than its root certificate, "+
+			"k8sss expects the Kubernetes client CA on its own", caURL)
+	}
+	root, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to parse the CA root: %w", err)
+	}
+	return root, nil
+}
+
+// verifyClientCert checks that cred chains to root as a client certificate.
+func verifyClientCert(cred *credential, root *x509.Certificate) error {
+	chain, err := pemutil.ParseCertificateBundle(cred.chain)
+	if err != nil {
+		return err
+	}
+	roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
+	roots.AddCert(root)
+	for _, cert := range chain[1:] {
+		intermediates.AddCert(cert)
+	}
+	_, err = cred.leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	return err
+}
+
+// whoAmI is `kubectl auth whoami`: it asks the kube-api server which user it
+// takes the holder of cred to be. An empty username means the server refused
+// the request as unauthenticated.
+func whoAmI(ctx context.Context, kubeAPIURL string, serverCA *x509.Certificate, cred *credential) (string, error) {
+	pair, err := tls.X509KeyPair(cred.chain, cred.key)
+	if err != nil {
+		return "", fmt.Errorf("Unable to load the issued certificate: %w", err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(serverCA)
+	client := &http.Client{
+		Timeout: dialTimeout,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs:      roots,
+			Certificates: []tls.Certificate{pair},
+		}},
+	}
+	body, err := json.Marshal(&authv1.SelfSubjectReview{TypeMeta: metav1.TypeMeta{
+		APIVersion: "authentication.k8s.io/v1",
+		Kind:       "SelfSubjectReview",
+	}})
+	if err != nil {
+		return "", fmt.Errorf("Unable to encode a SelfSubjectReview: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimSuffix(kubeAPIURL, "/")+"/apis/authentication.k8s.io/v1/selfsubjectreviews",
+		bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("Unable to build a SelfSubjectReview request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	resp, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("Unable to reach the kube-api server at %s: %w", kubeAPIURL, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusCreated, http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", nil
+	default:
+		return "", fmt.Errorf("The kube-api server answered %s to a SelfSubjectReview", resp.Status)
+	}
+	var review authv1.SelfSubjectReview
+	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+		return "", fmt.Errorf("Unable to parse the SelfSubjectReview: %w", err)
+	}
+	return review.Status.UserInfo.Username, nil
 }
 
 // List names every cluster that has been set up, which is one directory per
