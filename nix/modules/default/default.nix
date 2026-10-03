@@ -54,8 +54,7 @@ in
     enable = lib.mkEnableOption "k8sss";
     dnsNames = lib.mkOption {
       description = "List of DNS names step-ca should generate a TLS host certificate for";
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
+      type = lib.types.nonEmptyListOf lib.types.str;
     };
     # Generate JWKs with `step crypto jwk create --force --use sig --from-pem=<(step kms key $keyuri) /dev/stdout /dev/null | jq -c`
     adminKeys = lib.mkOption {

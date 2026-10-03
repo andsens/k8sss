@@ -28,7 +28,7 @@ yields
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: authorized-keys
+  name: admin-keys
 data:
   admin-keys.json: |-
     [

@@ -109,15 +109,7 @@ List of DNS names step-ca should generate a TLS host certificate for
 
 
 *Type:*
-list of string
-
-
-
-*Default:*
-
-```nix
-[ ]
-```
+non-empty (list of string)
 
 *Declared by:*
  - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
