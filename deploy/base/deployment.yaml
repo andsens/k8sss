@@ -45,7 +45,7 @@ spec:
         fsGroup: 1000
       initContainers:
       - name: setup-k8sss-config
-        image: ghcr.io/andsens/k8sss-bootstrap:0.3.0
+        image: ghcr.io/andsens/k8sss-bootstrap:0.4.1
         command: [bash]
         args: [/home/step/setup.sh]
         securityContext:
