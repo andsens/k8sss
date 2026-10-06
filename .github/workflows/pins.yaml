@@ -36,6 +36,10 @@ jobs:
       uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       with:
         extra_nix_config: experimental-features = nix-command flakes
+    # The hash can't live in flake.nix: it is the fixed-output hash of what the
+    # fetch produces, and evaluation can't fetch. Hashing vendor/ is right only
+    # for proxyVendor = false; with true the output is the module download cache
+    # (see nixpkgs pkgs/build-support/go/module.nix).
     - name: Compute the vendor hash
       id: hash
       run: |
