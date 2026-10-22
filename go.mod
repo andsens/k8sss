@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/docopt/docopt-go v0.0.0-20180111231733-ee0de3bc6815
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/smallstep/certificates v0.30.2
 	github.com/smallstep/cli v0.31.0
 	go.step.sm/crypto v0.91.0
