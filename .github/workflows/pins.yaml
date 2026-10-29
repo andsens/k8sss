@@ -33,7 +33,7 @@ jobs:
       with:
         go-version-file: go.mod
     - name: Install Nix
-      uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       with:
         extra_nix_config: experimental-features = nix-command flakes
     # The hash can't live in flake.nix: it is the fixed-output hash of what the
