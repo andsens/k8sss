@@ -15,7 +15,7 @@ main() {
        "type": "JWK",
        "name": .kid,
        "key": .,
-       "options": { "x509": { "templateFile": "/home/step/admin.tpl" } },
+       "options": { "x509": { "templateFile": "/home/step/client.tpl" } },
       }
     ]' "$STEPPATH/ca.json" >"$STEPPATH/config/ca.json"
 

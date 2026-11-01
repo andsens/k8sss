@@ -85,7 +85,9 @@ func (k *signingKey) Close() error { return k.manager.Close() }
 // provisioner expects and gives every token its own jti, which is what lets
 // the CA reject a replay. The cnf claim binds the token to csr, so a token
 // that leaks before it is used cannot be redeemed for another key.
-func (k *signingKey) token(caURL, username string, csr *x509.CertificateRequest) (string, error) {
+// The groups go in the token's user claim, where client.tpl reads them: the
+// token is signed, so the groups are as trusted as the key that signed it.
+func (k *signingKey) token(caURL, username string, groups []string, csr *x509.CertificateRequest) (string, error) {
 	// The JWK provisioner is named after the thumbprint of its key, so both
 	// the kid header and the issuer have to carry it.
 	kid, err := token.GenerateKeyID(k.OpaqueSigner)
@@ -96,7 +98,8 @@ func (k *signingKey) token(caURL, username string, csr *x509.CertificateRequest)
 		time.Time{}, time.Time{},
 		&jose.JSONWebKey{Key: k.OpaqueSigner, Algorithm: string(k.alg)})
 	// An empty SAN list means the subject is the only SAN.
-	ott, err := generator.SignToken(username, nil, token.WithFingerprint(csr))
+	ott, err := generator.SignToken(username, nil, token.WithFingerprint(csr),
+		token.WithUserData(map[string]any{"groups": groups}))
 	if err != nil {
 		return "", fmt.Errorf("Unable to sign the token: %w", err)
 	}

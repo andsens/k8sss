@@ -119,7 +119,7 @@ in
           data = {
             "admin-keys.json" = builtins.toJSON (map builtins.fromJSON cfg.adminKeys);
             "ca.json" = builtins.readFile ../../../deploy/base/ca.json;
-            "admin.tpl" = builtins.readFile ../../../deploy/base/admin.tpl;
+            "client.tpl" = builtins.readFile ../../../deploy/base/client.tpl;
             "setup.sh" = builtins.readFile ../../../deploy/base/setup.sh;
           };
         };
@@ -240,9 +240,9 @@ in
                       name = "secrets";
                       readOnly = true;
                     };
-                    "/home/step/admin.tpl" = {
+                    "/home/step/client.tpl" = {
                       name = "config";
-                      subPath = "admin.tpl";
+                      subPath = "client.tpl";
                     };
                     "/home/step/config/ca.json" = {
                       name = "config-rw";

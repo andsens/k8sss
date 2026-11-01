@@ -1,7 +1,7 @@
 {
 	"subject": {
-		"commonName": {{ toJson .Insecure.CR.Subject.CommonName }},
-		"organization": "system:masters"
+		"commonName": {{ toJson .Subject.CommonName }},
+		"organization": {{ toJson .Token.user.groups }}
 	},
 	"keyUsage": ["keyEncipherment", "digitalSignature"],
 	"extKeyUsage": ["clientAuth"]

@@ -15,6 +15,7 @@ func setupParams(url string) *k8sss.Params {
 		CAURL:      caURLPlaceholder,
 		KeyURI:     keyURIPlaceholder,
 		Username:   "system:admin",
+		Groups:     "system:masters",
 		Context:    hostnamePlaceholder,
 		Cluster:    hostnamePlaceholder,
 	}
@@ -94,13 +95,15 @@ func TestExecArgsParseBackToTheSameConfig(t *testing.T) {
 		CAURL:           "https://nas:9000",
 		KeyURI:          "sshagentkms:tester@workstation",
 		Username:        "system:admin",
+		Groups:          "system:masters,dev",
 	}
 	parsed, err := parseArgv(k8sss.ExecArgs(params))
 	if err != nil {
 		t.Fatalf("k8sss cannot parse the arguments it writes: %v", err)
 	}
 	if parsed.KeyURI != params.KeyURI || parsed.Username != params.Username ||
-		parsed.CAURL != params.CAURL || parsed.KubeAPIHostname != params.KubeAPIHostname {
+		parsed.CAURL != params.CAURL || parsed.KubeAPIHostname != params.KubeAPIHostname ||
+		parsed.Groups != params.Groups {
 		t.Errorf("round trip lost something:\n got %+v\nwant %+v", parsed.Params, params)
 	}
 }
@@ -131,11 +134,39 @@ func TestUsageParsesTheExecPluginArgv(t *testing.T) {
 	if config.KubeAPIHostname != "nas" {
 		t.Errorf("hostname: got %q", config.KubeAPIHostname)
 	}
+	// Kubeconfigs written before --groups existed carry no -g, and must keep
+	// getting the groups they always had.
+	if config.Groups != "system:masters" {
+		t.Errorf("groups: got %q, want the default system:masters", config.Groups)
+	}
+}
+
+// sign is for certificates someone else's key gets, so neither the user nor
+// the groups may fall back to the admin defaults.
+func TestSignNeedsAnExplicitUserAndGroups(t *testing.T) {
+	for _, argv := range [][]string{
+		{"sign", "nas"},
+		{"sign", "nas", "claude"},
+		{"sign", "-uclaude", "-gclaude", "nas"},
+	} {
+		if _, err := parseArgv(argv); err == nil {
+			t.Errorf("%q parsed", argv)
+		}
+	}
+	config, err := parseArgv([]string{"sign", "nas", "claude", "claude"})
+	if err != nil {
+		t.Fatalf("parsing sign: %v", err)
+	}
+	if !config.Sign || config.Username != "claude" || config.Groups != "claude" {
+		t.Errorf("got sign=%v username=%q groups=%q", config.Sign, config.Username, config.Groups)
+	}
 }
 
 // parseArgv runs an argument list through the same parse and resolve main does.
 func parseArgv(argv []string) (*k8sss.Config, error) {
-	opts, err := docopt.ParseArgs(usage, argv, "")
+	// Errors come back rather than printing the usage and exiting the test binary
+	parser := &docopt.Parser{HelpHandler: docopt.NoHelpHandler}
+	opts, err := parser.ParseArgs(usage, argv, "")
 	if err != nil {
 		return nil, err
 	}

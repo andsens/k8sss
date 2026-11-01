@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -109,19 +110,9 @@ type credential struct {
 	leaf  *x509.Certificate
 }
 
-// issueCertificate requests a client certificate from the CA, trusting root
-// for the connection to it.
+// issueCertificate requests a client certificate for a key it generates from
+// the CA, trusting root for the connection to it.
 func issueCertificate(ctx context.Context, c *Config, root []byte) (*credential, error) {
-	client, err := ca.NewClient(c.CAURL, ca.WithCABundle(root))
-	if err != nil {
-		return nil, fmt.Errorf("Unable to reach the CA at %s: %w", c.CAURL, err)
-	}
-	key, err := openSigningKey(c.KeyURI)
-	if err != nil {
-		return nil, err
-	}
-	defer key.Close()
-
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate a client key: %w", err)
@@ -130,30 +121,7 @@ func issueCertificate(ctx context.Context, c *Config, root []byte) (*credential,
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create a certificate request: %w", err)
 	}
-
-	var resp *api.SignResponse
-	for remaining := renewAttempts - 1; ; remaining-- {
-		// The CA remembers every token it has seen, so each attempt needs a
-		// freshly minted one.
-		ott, err := key.token(c.CAURL, c.Username, csr)
-		if err != nil {
-			return nil, err
-		}
-		resp, err = client.SignWithContext(ctx, &api.SignRequest{
-			CsrPEM: api.CertificateRequest{CertificateRequest: csr},
-			OTT:    ott,
-		})
-		if err == nil {
-			break
-		}
-		if remaining <= 0 {
-			return nil, fmt.Errorf("Failed to issue kube-api certificate (aborting):\n%w", err)
-		}
-		slog.Error(fmt.Sprintf("Failed to issue kube-api certificate (%d tries remaining):\n%s", remaining, err))
-		time.Sleep(renewBackoff)
-	}
-
-	chain, err := certChain(resp)
+	chain, err := signRequest(ctx, c, root, csr)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +138,79 @@ func issueCertificate(ctx context.Context, c *Config, root []byte) (*credential,
 		key:   pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
 		leaf:  leaf,
 	}, nil
+}
+
+// Sign implements `k8sss sign`: it has the CA issue a certificate for the PEM
+// certificate request read from in and writes the chain to out. The request
+// only supplies the key; client.tpl takes the common name and the groups from
+// the token.
+func Sign(ctx context.Context, c *Config, in io.Reader, out io.Writer) error {
+	root, err := os.ReadFile(c.clientCACrt)
+	if err != nil {
+		return fmt.Errorf("Unable to read %s, has `k8sss setup` been run for this cluster?: %w", c.clientCACrt, err)
+	}
+	data, err := io.ReadAll(in)
+	if err != nil {
+		return fmt.Errorf("Unable to read the certificate request: %w", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return fmt.Errorf("No PEM certificate request on stdin")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("Unable to parse the certificate request: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return fmt.Errorf("The certificate request's signature doesn't verify: %w", err)
+	}
+	chain, err := signRequest(ctx, c, root, csr)
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(chain)
+	return err
+}
+
+// signRequest has the CA sign csr for c's username and groups, trusting root
+// for the connection to it, and returns the issued chain.
+func signRequest(ctx context.Context, c *Config, root []byte, csr *x509.CertificateRequest) ([]byte, error) {
+	groups, err := c.GroupList()
+	if err != nil {
+		return nil, err
+	}
+	client, err := ca.NewClient(c.CAURL, ca.WithCABundle(root))
+	if err != nil {
+		return nil, fmt.Errorf("Unable to reach the CA at %s: %w", c.CAURL, err)
+	}
+	key, err := openSigningKey(c.KeyURI)
+	if err != nil {
+		return nil, err
+	}
+	defer key.Close()
+
+	var resp *api.SignResponse
+	for remaining := renewAttempts - 1; ; remaining-- {
+		// The CA remembers every token it has seen, so each attempt needs a
+		// freshly minted one.
+		ott, err := key.token(c.CAURL, c.Username, groups, csr)
+		if err != nil {
+			return nil, err
+		}
+		resp, err = client.SignWithContext(ctx, &api.SignRequest{
+			CsrPEM: api.CertificateRequest{CertificateRequest: csr},
+			OTT:    ott,
+		})
+		if err == nil {
+			break
+		}
+		if remaining <= 0 {
+			return nil, fmt.Errorf("Failed to issue kube-api certificate (aborting):\n%w", err)
+		}
+		slog.Error(fmt.Sprintf("Failed to issue kube-api certificate (%d tries remaining):\n%s", remaining, err))
+		time.Sleep(renewBackoff)
+	}
+	return certChain(resp)
 }
 
 func writeCredential(c *Config, cred *credential) error {

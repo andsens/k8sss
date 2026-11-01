@@ -105,7 +105,7 @@ func TestSSHAgentTokensVerify(t *testing.T) {
 			}
 			defer signing.Close()
 
-			ott, err := signing.token("https://nas:9000", "system:admin", testCSR(t, "system:admin"))
+			ott, err := signing.token("https://nas:9000", "system:admin", []string{"system:masters"}, testCSR(t, "system:admin"))
 			if err != nil {
 				t.Fatalf("token: %v", err)
 			}
@@ -144,7 +144,7 @@ func TestSSHAgentTokenIssuerIsTheThumbprint(t *testing.T) {
 		t.Fatalf("thumbprint: %v", err)
 	}
 	csr := testCSR(t, "system:admin")
-	ott, err := signing.token("https://nas:9000", "system:admin", csr)
+	ott, err := signing.token("https://nas:9000", "system:admin", []string{"system:masters"}, csr)
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
@@ -211,11 +211,11 @@ func TestTokensAreNotReused(t *testing.T) {
 	defer signing.Close()
 
 	csr := testCSR(t, "system:admin")
-	first, err := signing.token("https://nas:9000", "system:admin", csr)
+	first, err := signing.token("https://nas:9000", "system:admin", []string{"system:masters"}, csr)
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	second, err := signing.token("https://nas:9000", "system:admin", csr)
+	second, err := signing.token("https://nas:9000", "system:admin", []string{"system:masters"}, csr)
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}

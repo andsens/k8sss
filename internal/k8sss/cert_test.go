@@ -236,6 +236,7 @@ func TestCertAgainstAStandInCA(t *testing.T) {
 				CAURL:           stand.url,
 				KeyURI:          "sshagentkms:" + comment,
 				Username:        "system:admin",
+				Groups:          "system:masters",
 				KubeAPIHostname: "nas",
 			}
 			c, err := p.Config()

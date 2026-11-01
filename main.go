@@ -18,18 +18,27 @@ import (
 
 const usage = `k8sss - Issue Kubernetes client certificates via Smallstep
 Usage:
-  k8sss setup [--ca-url URL -k KN -u UN --context NAME --cluster NAME] KUBEAPI_URL
+  k8sss setup [--ca-url URL -k KN -u UN -g GROUPS --context NAME --cluster NAME] KUBEAPI_URL
   k8sss rm [--context NAME] KUBEAPI_HOSTNAME
   k8sss ls
-  k8sss cert [--ca-url URL -k KN -u UN] KUBEAPI_HOSTNAME
+  k8sss cert [--ca-url URL -k KN -u UN -g GROUPS] KUBEAPI_HOSTNAME
+  k8sss sign [--ca-url URL -k KN] KUBEAPI_HOSTNAME USER GROUPS
 
 Options:
   -c --ca-url URL   URL to the CA [default: https://$KUBEAPI_HOSTNAME:9000]
   -k --keyuri URI   Smallstep key URI used for authentication
                     [default: sshagentkms:$USER@$HOST]
   -u --username UN  K8S username to authenticate as [default: system:admin]
+  -g --groups GROUPS
+                    K8S groups to put the user in, comma separated
+                    [default: system:masters]
   --context NAME    Name of the context add/remove [default: $KUBEAPI_HOSTNAME]
   --cluster NAME    Name of the cluster add [default: $KUBEAPI_HOSTNAME]
+
+sign issues a certificate for the PEM certificate request on stdin and prints
+its chain, for USER in the comma separated GROUPS: no defaults, since the
+certificate is for someone else's key. The request only supplies the key: the
+common name and the groups come from the signed token.
 `
 
 // The defaults above are placeholders rather than values docopt can supply, so
@@ -83,6 +92,9 @@ func main() {
 	if params.Cert {
 		err = k8sss.Cert(ctx, config)
 	}
+	if params.Sign {
+		err = k8sss.Sign(ctx, config, os.Stdin, os.Stdout)
+	}
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
@@ -108,6 +120,9 @@ func resolve(params *k8sss.Params) (*k8sss.Config, error) {
 		}
 		params.KubeAPIHostname = host
 		params.KubeAPIURL = scheme + host + port
+	}
+	if params.Sign {
+		params.Username, params.Groups = params.SignUser, params.SignGroups
 	}
 	if params.KeyURI == keyURIPlaceholder {
 		usr, err := user.Current()

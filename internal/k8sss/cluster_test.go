@@ -31,6 +31,7 @@ func testParams() *Params {
 		CAURL:           "https://nas:9000",
 		KeyURI:          "sshagentkms:tester@workstation",
 		Username:        "system:admin",
+		Groups:          "system:masters",
 		Context:         "nas",
 		Cluster:         "nas",
 	}
@@ -129,7 +130,7 @@ func TestWriteKubeconfigAddsTheClusterUserAndContext(t *testing.T) {
 	if !slices.Equal(authInfo.Exec.Args, ExecArgs(&c.Params)) {
 		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, ExecArgs(&c.Params))
 	}
-	want := []string{"cert", "-ksshagentkms:tester@workstation", "-usystem:admin", "-chttps://nas:9000", "nas"}
+	want := []string{"cert", "-ksshagentkms:tester@workstation", "-usystem:admin", "-gsystem:masters", "-chttps://nas:9000", "nas"}
 	if !slices.Equal(authInfo.Exec.Args, want) {
 		t.Errorf("exec args:\n got %q\nwant %q", authInfo.Exec.Args, want)
 	}

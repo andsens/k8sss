@@ -1,6 +1,7 @@
 package k8sss
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -8,7 +9,9 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,14 +25,18 @@ import (
 	"github.com/smallstep/certificates/authority/config"
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/certificates/ca"
+	"github.com/smallstep/cli/token"
+	"github.com/smallstep/cli/utils/cautils"
 	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/pemutil"
 )
 
-// The deployment's ca.json issues 30 minute certificates and admin.tpl is what
-// puts the client in system:masters. Both are mirrored here, the template by
-// pointing at the file that is actually deployed.
+// The deployment's ca.json issues 30 minute certificates and client.tpl is what
+// turns the token's subject and groups into the client's identity. Both are
+// mirrored here, the template by pointing at the file that is actually
+// deployed.
 const (
-	adminTemplate       = "../../deploy/base/admin.tpl"
+	clientTemplate      = "../../deploy/base/client.tpl"
 	certificateDuration = 30 * time.Minute
 )
 
@@ -72,7 +79,7 @@ func startRealCA(t *testing.T, testCA *testCA, authorized crypto.PublicKey) stri
 							DisableRenewal: &disableRenewal,
 						},
 						Options: &provisioner.Options{
-							X509: &provisioner.X509Options{TemplateFile: adminTemplate},
+							X509: &provisioner.X509Options{TemplateFile: clientTemplate},
 						},
 					},
 				},
@@ -117,12 +124,12 @@ func TestCertAgainstTheRealCA(t *testing.T) {
 			})
 			leaf := credentialLeaf(t, out)
 
-			// admin.tpl is what grants cluster-admin, so it is worth checking
-			// that the deployed template produced it.
+			// client.tpl is what grants cluster-admin, so it is worth checking
+			// that the deployed template produced it from the default groups.
 			if leaf.Subject.CommonName != "system:admin" {
 				t.Errorf("common name: got %q, want system:admin", leaf.Subject.CommonName)
 			}
-			if !slices.Contains(leaf.Subject.Organization, "system:masters") {
+			if !slices.Equal(leaf.Subject.Organization, []string{"system:masters"}) {
 				t.Errorf("organization: got %q, want system:masters", leaf.Subject.Organization)
 			}
 			if !slices.Equal(leaf.ExtKeyUsage, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}) {
@@ -187,7 +194,7 @@ func TestTheRealCARejectsAReplayedToken(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	csr := testCSR(t, config.Username)
-	ott, err := signing.token(config.CAURL, config.Username, csr)
+	ott, err := signing.token(config.CAURL, config.Username, []string{"system:masters"}, csr)
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
@@ -224,7 +231,7 @@ func TestTheRealCARejectsATokenForAnotherCSR(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	ott, err := signing.token(config.CAURL, config.Username, testCSR(t, config.Username))
+	ott, err := signing.token(config.CAURL, config.Username, []string{"system:masters"}, testCSR(t, config.Username))
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
@@ -238,7 +245,7 @@ func TestTheRealCARejectsATokenForAnotherCSR(t *testing.T) {
 
 	// The same request with a token minted for it goes through, so the
 	// refusal above was down to the fingerprint.
-	ott, err = signing.token(config.CAURL, config.Username, other)
+	ott, err = signing.token(config.CAURL, config.Username, []string{"system:masters"}, other)
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
@@ -250,6 +257,108 @@ func TestTheRealCARejectsATokenForAnotherCSR(t *testing.T) {
 	}
 }
 
+// sign takes nothing but the key from the request: what the requester puts in
+// its subject doesn't reach the certificate, the token's username and groups
+// do.
+func TestSignAgainstTheRealCA(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	const comment = "tester@workstation"
+	t.Setenv("SSH_AUTH_SOCK", startAgent(t, key, comment))
+	testHome(t)
+	config := realCAConfig(t, newTestCA(t), key.Public(), comment)
+	config.Username, config.Groups = "claude", "claude,readers"
+
+	for name, tc := range map[string]struct {
+		subject pkix.Name
+		allowed bool
+	}{
+		"the username as common name":      {pkix.Name{CommonName: "claude"}, true},
+		"no common name, asking for admin": {pkix.Name{Organization: []string{"system:masters"}}, true},
+		"asking for admin with the name":   {pkix.Name{CommonName: "claude", Organization: []string{"system:masters"}}, true},
+		"another user's common name":       {pkix.Name{CommonName: "system:kube-controller-manager"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requester, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatalf("generating requester key: %v", err)
+			}
+			der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: tc.subject}, requester)
+			if err != nil {
+				t.Fatalf("creating CSR: %v", err)
+			}
+			in := bytes.NewReader(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
+			var out bytes.Buffer
+			err = Sign(context.Background(), config, in, &out)
+			if !tc.allowed {
+				if err == nil {
+					t.Error("the CA signed a request for another user's name")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Sign: %v", err)
+			}
+			leaf, err := pemutil.ParseCertificate(out.Bytes())
+			if err != nil {
+				t.Fatalf("parsing the chain: %v", err)
+			}
+			if leaf.Subject.CommonName != "claude" {
+				t.Errorf("common name: got %q, want claude", leaf.Subject.CommonName)
+			}
+			if !slices.Equal(leaf.Subject.Organization, []string{"claude", "readers"}) {
+				t.Errorf("organization: got %q, want [claude readers]", leaf.Subject.Organization)
+			}
+			if !leaf.PublicKey.(*ecdsa.PublicKey).Equal(&requester.PublicKey) {
+				t.Error("the certificate isn't for the request's key")
+			}
+		})
+	}
+}
+
+// A token without groups, which only an older k8sss would mint, gets a
+// certificate in no group at all rather than system:masters.
+func TestTheRealCAGrantsNoGroupWithoutTheClaim(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	const comment = "tester@workstation"
+	t.Setenv("SSH_AUTH_SOCK", startAgent(t, key, comment))
+	testHome(t)
+	config := realCAConfig(t, newTestCA(t), key.Public(), comment)
+
+	signing, err := openSigningKey(config.KeyURI)
+	if err != nil {
+		t.Fatalf("openSigningKey: %v", err)
+	}
+	defer signing.Close()
+	kid, err := token.GenerateKeyID(signing.OpaqueSigner)
+	if err != nil {
+		t.Fatalf("GenerateKeyID: %v", err)
+	}
+	csr := testCSR(t, config.Username)
+	ott, err := cautils.NewTokenGenerator(kid, kid, config.CAURL+"/1.0/sign", "", time.Time{}, time.Time{},
+		&jose.JSONWebKey{Key: signing.OpaqueSigner, Algorithm: string(signing.alg)}).
+		SignToken(config.Username, nil, token.WithFingerprint(csr))
+	if err != nil {
+		t.Fatalf("SignToken: %v", err)
+	}
+	client, err := ca.NewClient(config.CAURL, ca.WithRootFile(config.clientCACrt))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	resp, err := client.Sign(&api.SignRequest{CsrPEM: api.CertificateRequest{CertificateRequest: csr}, OTT: ott})
+	if err != nil {
+		return // refusing it is as good
+	}
+	if org := resp.ServerPEM.Subject.Organization; len(org) != 0 {
+		t.Errorf("organization: got %q, want none", org)
+	}
+}
+
 // realCAConfig points a config at a freshly started real CA, with the CA's
 // root where setup would have put it.
 func realCAConfig(t *testing.T, testCA *testCA, authorized crypto.PublicKey, comment string) *Config {
@@ -258,6 +367,7 @@ func realCAConfig(t *testing.T, testCA *testCA, authorized crypto.PublicKey, com
 		CAURL:           startRealCA(t, testCA, authorized),
 		KeyURI:          "sshagentkms:" + comment,
 		Username:        "system:admin",
+		Groups:          "system:masters",
 		KubeAPIHostname: "nas",
 	}).Config()
 	if err != nil {

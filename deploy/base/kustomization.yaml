@@ -8,7 +8,7 @@ configMapGenerator:
 - name: k8sss
   files:
   - setup.sh
-  - admin.tpl
+  - client.tpl
   - ca.json
 generatorOptions:
   disableNameSuffixHash: true

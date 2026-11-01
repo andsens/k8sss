@@ -111,8 +111,8 @@ spec:
           mountPath: /home/step/secrets
           readOnly: true
         - name: config
-          subPath: admin.tpl
-          mountPath: /home/step/admin.tpl
+          subPath: client.tpl
+          mountPath: /home/step/client.tpl
         - name: config-rw
           subPath: ca.json
           mountPath: /home/step/ca.json

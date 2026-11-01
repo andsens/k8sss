@@ -100,7 +100,14 @@ the kube-api server accepts it. Nothing is written until both checks pass.
 
 Run `k8sss --help` for details on how to adjust things like the smallstep CA
 endpoint (assumed to be `<kube-api>:9000`), the Kubernetes username
-(`system:admin`), or what key to use for authentication.
+(`system:admin`) and groups (`system:masters`), or what key to use for
+authentication.
+
+The username and groups travel in the token your key signs, and the CA's
+template takes both from there, never from the certificate request. That is
+what `k8sss sign HOSTNAME USER GROUPS` builds on: it issues a certificate for
+a request someone else made (piped in on stdin), as `USER` in `GROUPS`, so you
+can hand out narrower access than your own without that key ever choosing it.
 
 Set `LOGLEVEL` to `debug`, `verbose`, `info`, `warning` or `error` to change
 how much is logged.

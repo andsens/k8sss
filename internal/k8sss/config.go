@@ -17,13 +17,17 @@ type Params struct {
 	Rm    bool `docopt:"rm"`
 	Ls    bool `docopt:"ls"`
 	Cert  bool `docopt:"cert"`
+	Sign  bool `docopt:"sign"`
 
 	KubeAPIURL      string `docopt:"KUBEAPI_URL"`
 	KubeAPIHostname string `docopt:"KUBEAPI_HOSTNAME"`
+	SignUser        string `docopt:"USER"`
+	SignGroups      string `docopt:"GROUPS"`
 
 	CAURL    string `docopt:"--ca-url"`
 	KeyURI   string `docopt:"--keyuri"`
 	Username string `docopt:"--username"`
+	Groups   string `docopt:"--groups"`
 	Context  string `docopt:"--context"`
 	Cluster  string `docopt:"--cluster"`
 }
@@ -72,6 +76,21 @@ func (p *Params) Config() (*Config, error) {
 	return config, nil
 }
 
+// GroupList is --groups split on its commas: the Kubernetes groups the
+// certificate puts the user in.
+func (p *Params) GroupList() ([]string, error) {
+	var groups []string
+	for _, group := range strings.Split(p.Groups, ",") {
+		if group = strings.TrimSpace(group); group != "" {
+			groups = append(groups, group)
+		}
+	}
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("--groups names no group")
+	}
+	return groups, nil
+}
+
 // ExecArgs is the argument list `k8sss setup` writes into the kubeconfig for
 // kubectl to invoke the credential plugin with. It is the other half of the
 // usage string in main.
@@ -80,6 +99,7 @@ func ExecArgs(p *Params) []string {
 		"cert",
 		"-k" + p.KeyURI,
 		"-u" + p.Username,
+		"-g" + p.Groups,
 		"-c" + p.CAURL,
 		p.KubeAPIHostname,
 	}
