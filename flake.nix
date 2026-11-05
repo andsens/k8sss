@@ -68,7 +68,7 @@
                 name = "k8sss";
                 meta.mainProgram = "k8sss";
                 src = ./.;
-                vendorHash = "sha256-w0XgeAcdI7vRyBIaO4cANz3xoVoAemV+sU1XAzRgaTI=";
+                vendorHash = "sha256-SA/TrtJsGbuFFPfypsF5ZccjrXHipx5OPPJjpDxUPi8=";
                 nativeBuildInputs = lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.pkg-config;
                 buildInputs = lib.optional pkgs.stdenv.hostPlatform.isLinux (lib.getDev pkgs.pcsclite);
               };
