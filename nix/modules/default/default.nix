@@ -78,6 +78,21 @@ in
       type = lib.types.nullOr lib.types.int;
       default = 9000;
     };
+    images = {
+      bootstrap = lib.mkOption {
+        description = "Image of the init container that writes step-ca's configuration";
+        type = lib.types.str;
+        # Rewritten by .github/workflows/pins.yaml to the sha-tagged image built from the bumping commit
+        default = "ghcr.io/andsens/k8sss-bootstrap:sha-5e1e919";
+      };
+      step-ca = lib.mkOption {
+        description = "Image of step-ca";
+        type = lib.types.str;
+        # Kept in step with deploy/base/deployment.yaml by .github/workflows/pins.yaml, which is where Dependabot can
+        # see it
+        default = "smallstep/step-ca:0.30.2";
+      };
+    };
   };
   config = lib.mkIf cfg.enable {
     networking.firewall.allowedTCPPorts = lib.optional (cfg.nodePort != null) cfg.nodePort;
@@ -168,9 +183,7 @@ in
                 automountServiceAccountToken = false;
                 securityContext.fsGroup = 1000;
                 initContainersByName.setup-k8sss-config = {
-                  # Rewritten by .github/workflows/pins.yaml to the
-                  # sha-tagged image built from the bumping commit.
-                  image = "ghcr.io/andsens/k8sss-bootstrap:sha-5e1e919";
+                  image = cfg.images.bootstrap;
                   command = [ "bash" ];
                   args = [ "/home/step/setup.sh" ];
                   securityContext = {
@@ -206,10 +219,7 @@ in
                   };
                 };
                 containersByName.step-ca = {
-                  # Kept in step with deploy/base/deployment.yaml by
-                  # .github/workflows/pins.yaml, which is where
-                  # Dependabot can see it.
-                  image = "smallstep/step-ca:0.30.2";
+                  image = cfg.images.step-ca;
                   command = [ "/usr/local/bin/step-ca" ];
                   args = [ "/home/step/config/ca.json" ];
                   securityContext = {

@@ -116,6 +116,54 @@ non-empty (list of string)
 
 
 
+## k8sss\.images\.bootstrap
+
+
+
+Image of the init container that writes step-ca’s configuration
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"ghcr.io/andsens/k8sss-bootstrap:sha-5e1e919"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
+
+
+
+## k8sss\.images\.step-ca
+
+
+
+Image of step-ca
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"smallstep/step-ca:0.30.2"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/k8sss/blob/main/nix/modules/default/default.nix)
+
+
+
 ## k8sss\.nodePort
 
 
