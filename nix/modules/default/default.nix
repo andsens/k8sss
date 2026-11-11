@@ -27,24 +27,26 @@ let
       )
     )
   );
-  adminJWKs = lib.splitString "\n" (
-    lib.trim (
-      builtins.readFile (
-        pkgs.stdenvNoCC.mkDerivation {
-          name = "create-jwks";
-          phases = [ "installPhase" ];
-          installPhase = ''
-            runHook preInstall
-            ${lib.join "\n" (
-              map (key: ''
-                jwk=$(${lib.getExe pkgs.step-cli} crypto key format --jwk <<<${lib.escapeShellArg key})
-                kid=$(${lib.getExe pkgs.step-cli} crypto jwk thumbprint <<<"$jwk")
-                ${lib.getExe pkgs.jq} -c --arg kid "$kid" '.kid=$kid' <<<"$jwk" >>$out
-              '') adminSSHKeys
-            )}
-            runHook postInstall
-          '';
-        }
+  adminJWKs = lib.optionals (adminSSHKeys != [ ]) (
+    lib.splitString "\n" (
+      lib.trim (
+        builtins.readFile (
+          pkgs.stdenvNoCC.mkDerivation {
+            name = "create-jwks";
+            phases = [ "installPhase" ];
+            installPhase = ''
+              runHook preInstall
+              ${lib.join "\n" (
+                map (key: ''
+                  jwk=$(${lib.getExe pkgs.step-cli} crypto key format --jwk <<<${lib.escapeShellArg key})
+                  kid=$(${lib.getExe pkgs.step-cli} crypto jwk thumbprint <<<"$jwk")
+                  ${lib.getExe pkgs.jq} -c --arg kid "$kid" '.kid=$kid' <<<"$jwk" >>$out
+                '') adminSSHKeys
+              )}
+              runHook postInstall
+            '';
+          }
+        )
       )
     )
   );
@@ -95,6 +97,12 @@ in
     };
   };
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.adminKeys != [ ];
+        message = "k8sss needs at least one admin key in k8sss.adminKeys. By default those are the plain SSH keys (without options) in openssh.authorizedKeys.keys of normal users in the wheel group with a uid set, and there are none.";
+      }
+    ];
     networking.firewall.allowedTCPPorts = lib.optional (cfg.nodePort != null) cfg.nodePort;
     kubetree.resources.k8sss =
       (lib.optionalAttrs (cfg.nodePort != null) {
