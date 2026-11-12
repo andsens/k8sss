@@ -14,6 +14,12 @@ updates:
       update-types:
       - minor
       - patch
+  ignore:
+  # 0.92 changed its jose API; smallstep/certificates v0.30.2 and
+  # smallstep/cli v0.31.0 still use the old one. Drop this once both have
+  # releases on 0.92 or later
+  - dependency-name: go.step.sm/crypto
+    versions: ['>= 0.92']
 - package-ecosystem: github-actions
   directory: /
   schedule:
