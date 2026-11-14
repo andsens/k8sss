@@ -104,40 +104,27 @@ in
       }
     ];
     networking.firewall.allowedTCPPorts = lib.optional (cfg.nodePort != null) cfg.nodePort;
-    kubetree.resources.k8sss =
-      (lib.optionalAttrs (cfg.nodePort != null) {
-        nodePortService = {
-          apiVersion = "v1";
-          kind = "Service";
-          metadata = {
-            namespace = "k8sss";
-            name = "k8sss-nodeport";
-            labels."app.kubernetes.io/name" = "k8sss";
-          };
-          spec = {
-            type = "NodePort";
-            selector."app.kubernetes.io/name" = "k8sss";
-            portsByName.api = {
-              port = 9000;
-              nodePort = cfg.nodePort;
-              targetPort = "api";
-            };
-          };
+    # The objects k3s applies from its manifest k8sss. Lists stay sorted by name, as they were before they were written
+    # out here, so the pod template is unchanged and nothing restarts
+    services.k3s.manifests.k8sss.content =
+      let
+        metadata = {
+          namespace = "k8sss";
+          labels."app.kubernetes.io/name" = "k8sss";
         };
-      })
-      // {
-        namespace = {
+        selector."app.kubernetes.io/name" = "k8sss";
+      in
+      [
+        {
           apiVersion = "v1";
           kind = "Namespace";
           metadata.name = "k8sss";
-        };
-        config = {
+        }
+        {
           apiVersion = "v1";
           kind = "ConfigMap";
-          metadata = {
-            namespace = "k8sss";
+          metadata = metadata // {
             name = "k8sss";
-            labels."app.kubernetes.io/name" = "k8sss";
           };
           data = {
             "admin-keys.json" = builtins.toJSON (map builtins.fromJSON cfg.adminKeys);
@@ -145,148 +132,217 @@ in
             "client.tpl" = builtins.readFile ../../../deploy/base/client.tpl;
             "setup.sh" = builtins.readFile ../../../deploy/base/setup.sh;
           };
-        };
-        serviceAccount = {
+        }
+        {
           apiVersion = "v1";
           kind = "ServiceAccount";
-          metadata = {
-            namespace = "k8sss";
+          metadata = metadata // {
             name = "k8sss";
-            labels."app.kubernetes.io/name" = "k8sss";
           };
           automountServiceAccountToken = false;
-        };
-        service = {
+        }
+        {
           apiVersion = "v1";
           kind = "Service";
-          metadata = {
-            namespace = "k8sss";
+          metadata = metadata // {
             name = "k8sss";
-            labels."app.kubernetes.io/name" = "k8sss";
           };
           spec = {
             type = "ClusterIP";
-            selector."app.kubernetes.io/name" = "k8sss";
-            portsByName.api = {
-              port = 9000;
-              targetPort = "api";
-            };
+            inherit selector;
+            ports = [
+              {
+                name = "api";
+                port = 9000;
+                targetPort = "api";
+              }
+            ];
           };
+        }
+      ]
+      ++ lib.optional (cfg.nodePort != null) {
+        apiVersion = "v1";
+        kind = "Service";
+        metadata = metadata // {
+          name = "k8sss-nodeport";
         };
-        deployment = {
+        spec = {
+          type = "NodePort";
+          inherit selector;
+          ports = [
+            {
+              name = "api";
+              port = 9000;
+              nodePort = cfg.nodePort;
+              targetPort = "api";
+            }
+          ];
+        };
+      }
+      ++ [
+        {
           apiVersion = "apps/v1";
           kind = "Deployment";
-          metadata = {
-            namespace = "k8sss";
+          metadata = metadata // {
             name = "k8sss";
-            labels."app.kubernetes.io/name" = "k8sss";
           };
           spec = {
-            selector.matchLabels."app.kubernetes.io/name" = "k8sss";
+            selector.matchLabels = selector;
             template = {
-              metadata.labels."app.kubernetes.io/name" = "k8sss";
+              metadata.labels = selector;
               spec = {
                 nodeSelector."node-role.kubernetes.io/control-plane" = "true";
                 serviceAccountName = "k8sss";
                 automountServiceAccountToken = false;
                 securityContext.fsGroup = 1000;
-                initContainersByName.setup-k8sss-config = {
-                  image = cfg.images.bootstrap;
-                  command = [ "bash" ];
-                  args = [ "/home/step/setup.sh" ];
-                  securityContext = {
-                    allowPrivilegeEscalation = false;
-                    readOnlyRootFilesystem = true;
-                    capabilities.add = [ "CHOWN" ];
-                    capabilities.drop = [ "ALL" ];
-                  };
-                  envByName.DNSNAMES.value = lib.join "," cfg.dnsNames;
-                  volumeMountsByPath = {
-                    "/home/step/setup.sh" = {
-                      name = "config";
-                      subPath = "setup.sh";
+                initContainers = [
+                  {
+                    name = "setup-k8sss-config";
+                    image = cfg.images.bootstrap;
+                    command = [ "bash" ];
+                    args = [ "/home/step/setup.sh" ];
+                    securityContext = {
+                      allowPrivilegeEscalation = false;
+                      readOnlyRootFilesystem = true;
+                      capabilities.add = [ "CHOWN" ];
+                      capabilities.drop = [ "ALL" ];
                     };
-                    "/home/step/ca.json" = {
-                      name = "config";
-                      subPath = "ca.json";
+                    env = [
+                      {
+                        name = "DNSNAMES";
+                        value = lib.join "," cfg.dnsNames;
+                      }
+                    ];
+                    volumeMounts = [
+                      {
+                        mountPath = "/home/step/admin-keys.json";
+                        name = "config";
+                        subPath = "admin-keys.json";
+                      }
+                      {
+                        mountPath = "/home/step/ca.json";
+                        name = "config";
+                        subPath = "ca.json";
+                      }
+                      {
+                        mountPath = "/home/step/config";
+                        name = "config-rw";
+                      }
+                      {
+                        mountPath = "/home/step/kube-api-secrets/kube_apiserver_client_ca.crt";
+                        name = "k8sss-cert";
+                        readOnly = true;
+                      }
+                      {
+                        mountPath = "/home/step/kube-api-secrets/kube_apiserver_client_ca_key";
+                        name = "k8sss-key";
+                        readOnly = true;
+                      }
+                      {
+                        mountPath = "/home/step/secrets";
+                        name = "secrets";
+                      }
+                      {
+                        mountPath = "/home/step/setup.sh";
+                        name = "config";
+                        subPath = "setup.sh";
+                      }
+                    ];
+                  }
+                ];
+                containers = [
+                  {
+                    name = "step-ca";
+                    image = cfg.images.step-ca;
+                    command = [ "/usr/local/bin/step-ca" ];
+                    args = [ "/home/step/config/ca.json" ];
+                    securityContext = {
+                      allowPrivilegeEscalation = false;
+                      readOnlyRootFilesystem = true;
+                      capabilities.add = [ "NET_BIND_SERVICE" ];
+                      capabilities.drop = [ "ALL" ];
                     };
-                    "/home/step/admin-keys.json" = {
-                      name = "config";
-                      subPath = "admin-keys.json";
+                    ports = [
+                      {
+                        name = "api";
+                        containerPort = 9000;
+                      }
+                    ];
+                    livenessProbe = {
+                      httpGet = {
+                        path = "/health";
+                        port = "api";
+                        scheme = "HTTPS";
+                      };
+                      initialDelaySeconds = 5;
                     };
-                    "/home/step/kube-api-secrets/kube_apiserver_client_ca.crt" = {
-                      name = "k8sss-cert";
-                      readOnly = true;
+                    readinessProbe = {
+                      httpGet = {
+                        path = "/health";
+                        port = "api";
+                        scheme = "HTTPS";
+                      };
+                      initialDelaySeconds = 5;
                     };
-                    "/home/step/kube-api-secrets/kube_apiserver_client_ca_key" = {
-                      name = "k8sss-key";
-                      readOnly = true;
+                    volumeMounts = [
+                      {
+                        mountPath = "/home/step/client.tpl";
+                        name = "config";
+                        subPath = "client.tpl";
+                      }
+                      {
+                        mountPath = "/home/step/config/ca.json";
+                        name = "config-rw";
+                        subPath = "ca.json";
+                      }
+                      {
+                        mountPath = "/home/step/db";
+                        name = "database";
+                      }
+                      {
+                        mountPath = "/home/step/secrets";
+                        name = "secrets";
+                        readOnly = true;
+                      }
+                    ];
+                  }
+                ];
+                volumes = [
+                  {
+                    name = "config";
+                    configMap.name = "k8sss";
+                  }
+                  {
+                    name = "config-rw";
+                    emptyDir = { };
+                  }
+                  {
+                    name = "database";
+                    emptyDir = { };
+                  }
+                  {
+                    name = "k8sss-cert";
+                    hostPath = {
+                      path = cfg.clientCaCertPath;
+                      type = "File";
                     };
-                    "/home/step/secrets".name = "secrets";
-                    "/home/step/config".name = "config-rw";
-                  };
-                };
-                containersByName.step-ca = {
-                  image = cfg.images.step-ca;
-                  command = [ "/usr/local/bin/step-ca" ];
-                  args = [ "/home/step/config/ca.json" ];
-                  securityContext = {
-                    allowPrivilegeEscalation = false;
-                    readOnlyRootFilesystem = true;
-                    capabilities.add = [ "NET_BIND_SERVICE" ];
-                    capabilities.drop = [ "ALL" ];
-                  };
-                  portsByName.api.containerPort = 9000;
-                  livenessProbe = {
-                    httpGet = {
-                      path = "/health";
-                      port = "api";
-                      scheme = "HTTPS";
+                  }
+                  {
+                    name = "k8sss-key";
+                    hostPath = {
+                      path = cfg.clientCaKeyPath;
+                      type = "File";
                     };
-                    initialDelaySeconds = 5;
-                  };
-                  readinessProbe = {
-                    httpGet = {
-                      path = "/health";
-                      port = "api";
-                      scheme = "HTTPS";
-                    };
-                    initialDelaySeconds = 5;
-                  };
-                  volumeMountsByPath = {
-                    "/home/step/secrets" = {
-                      name = "secrets";
-                      readOnly = true;
-                    };
-                    "/home/step/client.tpl" = {
-                      name = "config";
-                      subPath = "client.tpl";
-                    };
-                    "/home/step/config/ca.json" = {
-                      name = "config-rw";
-                      subPath = "ca.json";
-                    };
-                    "/home/step/db".name = "database";
-                  };
-                };
-                volumesByName = {
-                  config.configMap.name = "k8sss";
-                  secrets.emptyDir.medium = "Memory";
-                  k8sss-cert.hostPath = {
-                    path = cfg.clientCaCertPath;
-                    type = "File";
-                  };
-                  k8sss-key.hostPath = {
-                    path = cfg.clientCaKeyPath;
-                    type = "File";
-                  };
-                  config-rw.emptyDir = { };
-                  database.emptyDir = { };
-                };
+                  }
+                  {
+                    name = "secrets";
+                    emptyDir.medium = "Memory";
+                  }
+                ];
               };
             };
           };
-        };
-      };
+        }
+      ];
   };
 }

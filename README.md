@@ -115,16 +115,15 @@ how much is logged.
 ## Nix
 
 As an alternative to the [manual kubectl deployment](#installation) above,
-import `k8sss.nixosModules.default` on a host running
-[`kubetree`](https://github.com/andsens/nix-kubetree) with
-`kubetree.kubernetes` and `kubetree.k3s` enabled:
+import `k8sss.nixosModules.default` on a host running k3s. The
+module writes its objects to the k3s manifest `k8sss`
+(`services.k3s.manifests.k8sss`):
 
 ```nix
 {
   imports = [ inputs.k8sss.nixosModules.default ];
   config = {
-    kubetree.kubernetes.enable = true;
-    kubetree.k3s.enable = true;
+    services.k3s.enable = true;
     k8sss = {
       enable = true;
       dnsNames = [ "nas" ];
