@@ -80,6 +80,12 @@ in
       type = lib.types.nullOr lib.types.int;
       default = 9000;
     };
+    metricsPort = lib.mkOption {
+      description = "The port step-ca serves Prometheus metrics on (its `metricsAddress`), plain HTTP at /metrics, named `metrics` on the pod and the Service; null for none.";
+      type = lib.types.nullOr lib.types.port;
+      default = null;
+      example = 9001;
+    };
     images = {
       bootstrap = lib.mkOption {
         description = "Image of the init container that writes step-ca's configuration";
@@ -128,7 +134,14 @@ in
           };
           data = {
             "admin-keys.json" = builtins.toJSON (map builtins.fromJSON cfg.adminKeys);
-            "ca.json" = builtins.readFile ../../../deploy/base/ca.json;
+            # Byte for byte the file, unless metrics are on
+            "ca.json" =
+              if cfg.metricsPort == null then
+                builtins.readFile ../../../deploy/base/ca.json
+              else
+                builtins.toJSON (
+                  lib.importJSON ../../../deploy/base/ca.json // { metricsAddress = ":${toString cfg.metricsPort}"; }
+                );
             "client.tpl" = builtins.readFile ../../../deploy/base/client.tpl;
             "setup.sh" = builtins.readFile ../../../deploy/base/setup.sh;
           };
@@ -156,7 +169,12 @@ in
                 port = 9000;
                 targetPort = "api";
               }
-            ];
+            ]
+            ++ lib.optional (cfg.metricsPort != null) {
+              name = "metrics";
+              port = cfg.metricsPort;
+              targetPort = "metrics";
+            };
           };
         }
       ]
@@ -267,7 +285,11 @@ in
                         name = "api";
                         containerPort = 9000;
                       }
-                    ];
+                    ]
+                    ++ lib.optional (cfg.metricsPort != null) {
+                      name = "metrics";
+                      containerPort = cfg.metricsPort;
+                    };
                     livenessProbe = {
                       httpGet = {
                         path = "/health";
