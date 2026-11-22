@@ -65,3 +65,7 @@ jobs:
     # pins still matches go.mod and go.sum.
     - name: Build the package
       run: nix build --print-build-logs .#k8sss
+    # The pins workflow keeps the image lock in step on Dependabot's bumps;
+    # this catches a default changed any other way.
+    - name: Check the image lock
+      run: nix build --print-build-logs ".#checks.$(nix eval --raw --impure --expr builtins.currentSystem).image-lock"

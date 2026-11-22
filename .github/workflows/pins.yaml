@@ -1,8 +1,8 @@
 name: Pins
 
 # Dependabot cannot know that a Go bump moves the vendor hash flake.nix pins,
-# nor that a base image bump moves the image the module pins, so both are put
-# right on the branch before the pull request is merged.
+# nor that a base image bump moves the image the module pins and its lock, so
+# all are put right on the branch before the pull request is merged.
 on:
   push:
     branches: ['dependabot/**']
@@ -46,8 +46,74 @@ jobs:
         go mod vendor
         echo "hash=$(nix hash path --type sha256 --sri vendor)" >>"$GITHUB_OUTPUT"
 
+  # The refs the module will name and the digest and Nix hash of each, which
+  # consumers that preload the images read through lib.imageLock. Locking
+  # resolves the images with a tool from outside this repository, so it too
+  # runs without the token.
+  image-lock:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    outputs:
+      bootstrap: ${{ steps.refs.outputs.bootstrap }}
+      stepca: ${{ steps.refs.outputs.stepca }}
+      lock: ${{ steps.lock.outputs.lock }}
+    steps:
+    - name: Checkout the branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.ref_name }}
+        # Deep, so the branch can be compared against main below.
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Install Nix
+      uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      with:
+        extra_nix_config: experimental-features = nix-command flakes
+    - name: Work out the refs
+      id: refs
+      run: |
+        bootstrap=$(grep -o 'ghcr.io/andsens/k8sss-bootstrap:[^"]*' nix/modules/default/default.nix)
+        # Only when this branch changes the Dockerfile does
+        # build-bootstrap.yaml publish an image for this commit, tagged with
+        # its short sha. The tag is known in advance, so the pin can be written
+        # without waiting for that build - and if the build fails the checks
+        # fail and nothing merges. Pinning on any other bump would name a tag
+        # that never gets built.
+        #
+        # $GITHUB_SHA, which is what metadata-action derives the tag from in
+        # build-bootstrap.yaml, so both name the same image. Deriving it any
+        # other way can diverge: the head of a push is what gets built, not
+        # necessarily the commit that touched the Dockerfile.
+        if ! git diff --quiet origin/main -- bootstrap.Dockerfile; then
+          bootstrap="ghcr.io/andsens/k8sss-bootstrap:sha-${GITHUB_SHA:0:7}"
+        fi
+        # The module and the deployment manifest name the same step-ca, but
+        # only the manifest sits where Dependabot can see it, so the module
+        # follows whatever the manifest says.
+        stepca=$(grep -o 'smallstep/step-ca:[^[:space:]]*' deploy/base/deployment.yaml | head -1)
+        echo "bootstrap=$bootstrap" >>"$GITHUB_OUTPUT"
+        echo "stepca=$stepca" >>"$GITHUB_OUTPUT"
+    - name: Lock the images
+      id: lock
+      env:
+        BOOTSTRAP: ${{ steps.refs.outputs.bootstrap }}
+        STEPCA: ${{ steps.refs.outputs.stepca }}
+      run: |
+        lock=nix/modules/default/images.lock
+        # Re-resolving an unchanged tag could only pick up a re-pushed image
+        if ! jq -e --arg a "$BOOTSTRAP" --arg b "$STEPCA" 'keys == ([$a, $b] | sort)' "$lock" >/dev/null; then
+          # A new bootstrap tag only exists once build-bootstrap.yaml, started
+          # by the same push, has published it
+          for _ in $(seq 80); do
+            nix run nixpkgs#skopeo -- inspect --raw "docker://$BOOTSTRAP" >/dev/null 2>&1 && break
+            sleep 30
+          done
+          nix run github:nixos-homelab/shared#lock-images -- --lock "$lock" "$BOOTSTRAP" "$STEPCA"
+        fi
+        echo "lock=$(jq -c . "$lock")" >>"$GITHUB_OUTPUT"
+
   pins:
-    needs: vendor-hash
+    needs: [vendor-hash, image-lock]
     runs-on: ubuntu-latest
     steps:
     - name: Checkout the branch
@@ -70,6 +136,9 @@ jobs:
     - name: Update the pins
       env:
         VENDOR_HASH: ${{ needs.vendor-hash.outputs.hash }}
+        BOOTSTRAP: ${{ needs.image-lock.outputs.bootstrap }}
+        STEPCA: ${{ needs.image-lock.outputs.stepca }}
+        LOCK: ${{ needs.image-lock.outputs.lock }}
       run: |
         # It comes from a job running third-party code, so only a well-formed
         # hash goes into flake.nix.
@@ -82,32 +151,32 @@ jobs:
         # indistinguishable from there being nothing to do.
         grep -qF "vendorHash = \"$VENDOR_HASH\"" flake.nix
 
-        # Only when this branch changes the Dockerfile does
-        # build-bootstrap.yaml publish an image for this commit, tagged with
-        # its short sha. The tag is known in advance, so the pin can be written
-        # without waiting for that build - and if the build fails the checks
-        # fail and nothing merges. Pinning on any other bump would name a tag
-        # that never gets built.
-        if ! git diff --quiet origin/main -- bootstrap.Dockerfile; then
-          # $GITHUB_SHA, which is what metadata-action derives the tag from
-          # in build-bootstrap.yaml, so both name the same image. Deriving it
-          # any other way can diverge: the head of a push is what gets built,
-          # not necessarily the commit that touched the Dockerfile.
-          image="ghcr.io/andsens/k8sss-bootstrap:sha-${GITHUB_SHA:0:7}"
-          sed -i "s|ghcr.io/andsens/k8sss-bootstrap:[^\"]*|$image|" nix/modules/default/default.nix
+        # The refs and the lock come from a job running third-party code, so
+        # only well-formed ones go into the module and the lock.
+        [[ $BOOTSTRAP =~ ^ghcr\.io/andsens/k8sss-bootstrap:[A-Za-z0-9._-]+$ ]] || {
+          echo "not a bootstrap image: '$BOOTSTRAP'"
+          exit 1
+        }
+        [[ $STEPCA =~ ^smallstep/step-ca:[A-Za-z0-9._-]+$ ]] || {
+          echo "not a step-ca image: '$STEPCA'"
+          exit 1
+        }
+        jq -e --arg a "$BOOTSTRAP" --arg b "$STEPCA" '
+          keys == ([$a, $b] | sort) and all(.[];
+            (.digest | test("^sha256:[0-9a-f]{64}$")) and (.hash | test("^sha256-[A-Za-z0-9+/]{43}=$")))
+        ' <<<"$LOCK" >/dev/null || {
+          echo "not an image lock of $BOOTSTRAP and $STEPCA: '$LOCK'"
+          exit 1
+        }
+        for image in "$BOOTSTRAP" "$STEPCA"; do
+          sed -i "s|${image%%:*}:[^\"]*|$image|" nix/modules/default/default.nix
           grep -qF "\"$image\"" nix/modules/default/default.nix
-        fi
-
-        # The module and the deployment manifest name the same step-ca, but
-        # only the manifest sits where Dependabot can see it, so the module
-        # follows whatever the manifest says.
-        stepca=$(grep -o 'smallstep/step-ca:[^[:space:]]*' deploy/base/deployment.yaml | head -1)
-        sed -i "s|smallstep/step-ca:[^\"]*|$stepca|" nix/modules/default/default.nix
-        grep -qF "\"$stepca\"" nix/modules/default/default.nix
+        done
+        jq -S . <<<"$LOCK" >nix/modules/default/images.lock
 
         git diff --quiet && { echo "the pins are already current"; exit 0; }
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
         git commit -m 'Update the pins for the bumped dependencies' \
-          flake.nix nix/modules/default/default.nix
+          flake.nix nix/modules/default/default.nix nix/modules/default/images.lock
         git push

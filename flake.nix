@@ -33,6 +33,10 @@
       {
         systems = import systems;
         flake.nixosModules.default = importApply ./nix/modules/default { inherit self inputs; };
+        # The digest and Nix hash of each image the module names by default, as `{ "name:tag" = { digest; hash; }; }`,
+        # for consumers that preload the images (homelab-shared's lib.images.locked reads it). The pins workflow
+        # writes it whenever it moves a default, so a consumer's k8sss always comes with the hashes of its own refs.
+        flake.lib.imageLock = ./nix/modules/default/images.lock;
         perSystem =
           {
             pkgs,
@@ -49,6 +53,23 @@
             };
           in
           {
+            # Every image the module names by default is in imageLock
+            checks.image-lock =
+              let
+                options =
+                  (inputs.nixpkgs.lib.nixosSystem {
+                    modules = [
+                      self.nixosModules.default
+                      { nixpkgs.hostPlatform = pkgs.stdenv.hostPlatform.system; }
+                    ];
+                  }).options.k8sss.images;
+                refs = map (image: image.default) (lib.attrValues options);
+                lock = lib.importJSON self.lib.imageLock;
+                missing = lib.filter (ref: !lock ? ${ref}) refs;
+              in
+              assert lib.assertMsg (missing == [ ])
+                "Not in nix/modules/default/images.lock, run `nix run github:nixos-homelab/shared#lock-images -- --lock nix/modules/default/images.lock ${lib.concatStringsSep " " refs}`: ${lib.concatStringsSep ", " missing}";
+              pkgs.runCommand "image-lock" { } "touch $out";
             apps.update-docs.program = inputs.docs.lib.utils.updateRepo {
               inherit pkgs;
               paths."docs/options.md" = options-docs;
