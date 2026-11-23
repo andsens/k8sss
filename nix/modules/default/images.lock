@@ -1,0 +1,10 @@
+{
+  "ghcr.io/andsens/k8sss-bootstrap:sha-5e1e919": {
+    "digest": "sha256:3c0a6509d031c85bf75863a2a075817b197c54478e732e31f539931f89c9f142",
+    "hash": "sha256-2Pio0O3IfTSkLBPUDFWoxz0mYyguXhb4WSBTG2C36zs="
+  },
+  "smallstep/step-ca:0.30.2": {
+    "digest": "sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270",
+    "hash": "sha256-ZdmyHyXjI+gRwHhmxkiW3qEmWPuLxbqYCF4FgwJX4kU="
+  }
+}
